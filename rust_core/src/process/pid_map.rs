@@ -2,23 +2,21 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 
-use log::{error, debug};
+use log::{debug, error};
 use rustc_hash::FxHashMap;
+use windows::core::PWSTR;
 use windows::Win32::Foundation::NO_ERROR;
 use windows::Win32::NetworkManagement::IpHelper::{
-    GetExtendedTcpTable, GetExtendedUdpTable, MIB_TCP6ROW_OWNER_PID,
-    MIB_TCP6TABLE_OWNER_PID, MIB_TCPROW_OWNER_PID, MIB_TCPTABLE_OWNER_PID,
-    MIB_UDP6ROW_OWNER_PID, MIB_UDP6TABLE_OWNER_PID, MIB_UDPROW_OWNER_PID,
-    MIB_UDPTABLE_OWNER_PID, TCP_TABLE_OWNER_PID_ALL, UDP_TABLE_OWNER_PID,
+    GetExtendedTcpTable, GetExtendedUdpTable, MIB_TCP6ROW_OWNER_PID, MIB_TCP6TABLE_OWNER_PID,
+    MIB_TCPROW_OWNER_PID, MIB_TCPTABLE_OWNER_PID, MIB_UDP6ROW_OWNER_PID, MIB_UDP6TABLE_OWNER_PID,
+    MIB_UDPROW_OWNER_PID, MIB_UDPTABLE_OWNER_PID, TCP_TABLE_OWNER_PID_ALL, UDP_TABLE_OWNER_PID,
 };
 use windows::Win32::Networking::WinSock::{AF_INET, AF_INET6};
 use windows::Win32::System::ProcessStatus::K32GetModuleFileNameExA;
 use windows::Win32::System::Threading::{
-    OpenProcess, QueryFullProcessImageNameW,
-    PROCESS_NAME_WIN32, PROCESS_QUERY_INFORMATION,
+    OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_INFORMATION,
     PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
 };
-use windows::core::PWSTR;
 
 use crate::stats::flow_stat::ProcessCategory;
 
@@ -525,7 +523,10 @@ fn get_process_name_and_path(pid: u32) -> (String, String) {
         return ("System Idle".to_string(), "".to_string());
     }
     if pid == 4 {
-        return ("System".to_string(), "C:\\Windows\\System32\\ntoskrnl.exe".to_string());
+        return (
+            "System".to_string(),
+            "C:\\Windows\\System32\\ntoskrnl.exe".to_string(),
+        );
     }
 
     unsafe {
@@ -582,10 +583,8 @@ fn get_process_name_and_path(pid: u32) -> (String, String) {
 /// Multiple services sharing a PID (common with svchost.exe) are joined.
 fn query_service_pids() -> HashMap<u32, String> {
     use windows::Win32::System::Services::{
-        OpenSCManagerW, EnumServicesStatusExW, CloseServiceHandle,
-        SC_MANAGER_ENUMERATE_SERVICE, SC_ENUM_PROCESS_INFO,
-        SERVICE_WIN32, SERVICE_ACTIVE,
-        ENUM_SERVICE_STATUS_PROCESSW,
+        CloseServiceHandle, EnumServicesStatusExW, OpenSCManagerW, ENUM_SERVICE_STATUS_PROCESSW,
+        SC_ENUM_PROCESS_INFO, SC_MANAGER_ENUMERATE_SERVICE, SERVICE_ACTIVE, SERVICE_WIN32,
     };
 
     let mut pid_names: HashMap<u32, String> = HashMap::new();
@@ -663,7 +662,8 @@ fn query_service_pids() -> HashMap<u32, String> {
                 }
 
                 // Multiple services can share a PID (svchost grouping)
-                pid_names.entry(pid)
+                pid_names
+                    .entry(pid)
                     .and_modify(|existing| {
                         // Limit concatenated length to keep UI readable
                         if existing.len() < 80 {

@@ -4,8 +4,8 @@ mod limiter;
 mod process;
 mod stats;
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use arc_swap::ArcSwap;
@@ -16,6 +16,7 @@ use divert::capture::{self, CAPTURE_DROP_COUNT, CAPTURE_TOTAL_COUNT};
 use divert::parser::{Direction, ParsedPacket};
 use ipc::pipe_server;
 use process::pid_map::PidMapper;
+use stats::daily_usage::{DailyUsageRecord, DailyUsageStore};
 use stats::flow_stat::FlowAggregator;
 
 fn main() {
@@ -29,6 +30,8 @@ fn main() {
     let running = Arc::new(AtomicBool::new(true));
     let latest_stats: Arc<ArcSwap<Vec<stats::flow_stat::ProcessStats>>> =
         Arc::new(ArcSwap::from_pointee(Vec::new()));
+    let latest_history: Arc<ArcSwap<Vec<DailyUsageRecord>>> =
+        Arc::new(ArcSwap::from_pointee(Vec::new()));
 
     // Channel for parsed packets — small stack-only structs (~48 bytes each)
     let (tx, rx) = bounded::<ParsedPacket>(65536);
@@ -40,8 +43,9 @@ fn main() {
 
     // Start IPC named pipe server
     let ipc_stats = latest_stats.clone();
+    let ipc_history = latest_history.clone();
     let ipc_running = running.clone();
-    let ipc_handle = pipe_server::start_pipe_server(ipc_stats, ipc_running);
+    let ipc_handle = pipe_server::start_pipe_server(ipc_stats, ipc_history, ipc_running);
 
     // Set up Ctrl+C handler
     let ctrlc_running = running.clone();
@@ -50,6 +54,8 @@ fn main() {
     // Main processing loop
     let mut pid_mapper = PidMapper::new();
     let mut aggregator = FlowAggregator::new();
+    let mut daily_usage = DailyUsageStore::load();
+    latest_history.store(Arc::new(daily_usage.snapshot()));
     let mut last_snapshot = std::time::Instant::now();
 
     info!("Processing loop started. Press Ctrl+C to stop.");
@@ -67,7 +73,7 @@ fn main() {
         // First packet: block up to 50ms to avoid busy-spin
         match rx.recv_timeout(Duration::from_millis(50)) {
             Ok(parsed) => {
-                process_packet(&parsed, &mut pid_mapper, &mut aggregator);
+                process_packet(&parsed, &mut pid_mapper, &mut aggregator, &mut daily_usage);
                 batch_count += 1;
             }
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
@@ -83,7 +89,7 @@ fn main() {
         loop {
             match rx.try_recv() {
                 Ok(parsed) => {
-                    process_packet(&parsed, &mut pid_mapper, &mut aggregator);
+                    process_packet(&parsed, &mut pid_mapper, &mut aggregator, &mut daily_usage);
                     batch_count += 1;
                 }
                 Err(_) => break,
@@ -94,9 +100,12 @@ fn main() {
 
         // Every 1 second: compute speeds, reset deltas, push to IPC, log stats
         if last_snapshot.elapsed() >= Duration::from_secs(1) {
+            let _ = daily_usage.maybe_rollover();
             let stats = aggregator.snapshot();
             // ArcSwap store — lock-free, readers see new data on next load
             latest_stats.store(Arc::new(stats));
+            latest_history.store(Arc::new(daily_usage.snapshot()));
+            daily_usage.maybe_flush();
             last_snapshot = std::time::Instant::now();
 
             // Log throughput diagnostics every 5 seconds
@@ -105,7 +114,10 @@ fn main() {
                 let dropped = CAPTURE_DROP_COUNT.load(Ordering::Relaxed);
                 info!(
                     "[diag] captured={} processed={} dropped={} channel_pending={}",
-                    total, processed_count, dropped, rx.len()
+                    total,
+                    processed_count,
+                    dropped,
+                    rx.len()
                 );
                 last_log = std::time::Instant::now();
             }
@@ -113,6 +125,8 @@ fn main() {
     }
 
     info!("Shutting down...");
+    let _ = daily_usage.flush_now();
+    latest_history.store(Arc::new(daily_usage.snapshot()));
 
     // Wait for threads to finish
     let _ = capture_handle.join();
@@ -128,6 +142,7 @@ fn process_packet(
     parsed: &ParsedPacket,
     pid_mapper: &mut PidMapper,
     aggregator: &mut FlowAggregator,
+    daily_usage: &mut DailyUsageStore,
 ) {
     if let Some(pid) = pid_mapper.lookup_pid(
         parsed.src_ip,
@@ -144,6 +159,7 @@ fn process_packet(
             Direction::Inbound => (0u64, parsed.length as u64),
         };
         aggregator.record(pid, &name, category, upload, download);
+        daily_usage.record(upload, download);
     }
 }
 
@@ -151,7 +167,7 @@ fn ctrlc_handler(running: Arc<AtomicBool>) {
     std::thread::spawn(move || {
         unsafe {
             use windows::Win32::System::Console::{
-                SetConsoleCtrlHandler, CTRL_C_EVENT, CTRL_BREAK_EVENT,
+                SetConsoleCtrlHandler, CTRL_BREAK_EVENT, CTRL_C_EVENT,
             };
 
             static mut RUNNING_PTR: Option<*const AtomicBool> = None;

@@ -3,9 +3,9 @@ use std::time::Instant;
 /// A simple token bucket rate limiter.
 /// Can be used to limit bandwidth per-process.
 pub struct TokenBucket {
-    capacity: f64,     // max tokens (bytes)
-    tokens: f64,       // current available tokens
-    rate: f64,         // tokens per second (bytes/sec)
+    capacity: f64, // max tokens (bytes)
+    tokens: f64,   // current available tokens
+    rate: f64,     // tokens per second (bytes/sec)
     last_refill: Instant,
 }
 

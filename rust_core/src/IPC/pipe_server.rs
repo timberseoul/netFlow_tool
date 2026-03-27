@@ -1,13 +1,13 @@
 use std::io::{BufRead, BufReader, BufWriter, Write};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread;
 
 use arc_swap::ArcSwap;
 use log::{error, info};
 
 use super::protocol::{IpcRequest, IpcResponse};
-use crate::stats::flow_stat::ProcessStats;
+use crate::stats::{daily_usage::DailyUsageRecord, flow_stat::ProcessStats};
 
 const PIPE_NAME: &str = r"\\.\pipe\netFlow_tool_ipc";
 
@@ -15,6 +15,7 @@ const PIPE_NAME: &str = r"\\.\pipe\netFlow_tool_ipc";
 /// It listens for JSON requests from the Go TUI and responds with stats.
 pub fn start_pipe_server(
     stats_ref: Arc<ArcSwap<Vec<ProcessStats>>>,
+    history_ref: Arc<ArcSwap<Vec<DailyUsageRecord>>>,
     running: Arc<AtomicBool>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
@@ -30,7 +31,7 @@ pub fn start_pipe_server(
                     }
                     info!("Client connected");
 
-                    handle_client(pipe, &stats_ref, &running);
+                    handle_client(pipe, &stats_ref, &history_ref, &running);
 
                     info!("Client disconnected");
                 }
@@ -50,12 +51,11 @@ pub fn start_pipe_server(
 fn create_named_pipe_instance() -> Result<PipeHandle, String> {
     use std::ffi::CString;
 
+    use windows::core::PCSTR;
     use windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
     use windows::Win32::System::Pipes::{
-        CreateNamedPipeA, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES,
-        PIPE_WAIT,
+        CreateNamedPipeA, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
     };
-    use windows::core::PCSTR;
 
     unsafe {
         let pipe_name = CString::new(PIPE_NAME).unwrap();
@@ -93,6 +93,7 @@ fn connect_pipe(pipe: &PipeHandle) -> bool {
 fn handle_client(
     pipe: PipeHandle,
     stats_ref: &Arc<ArcSwap<Vec<ProcessStats>>>,
+    history_ref: &Arc<ArcSwap<Vec<DailyUsageRecord>>>,
     running: &Arc<AtomicBool>,
 ) {
     use windows::Win32::Foundation::CloseHandle;
@@ -125,6 +126,10 @@ fn handle_client(
                             // ArcSwap load — lock-free, no deep clone
                             let stats = stats_ref.load();
                             IpcResponse::stats_ref(&stats)
+                        }
+                        "get_history" => {
+                            let history = history_ref.load();
+                            IpcResponse::history_ref(&history)
                         }
                         "ping" => IpcResponse::ack(),
                         _ => IpcResponse::error(&format!("Unknown command: {}", req.command)),
@@ -203,8 +208,6 @@ impl std::io::Write for PipeWriter {
     fn flush(&mut self) -> std::io::Result<()> {
         use windows::Win32::Storage::FileSystem::FlushFileBuffers;
 
-        unsafe {
-            FlushFileBuffers(self.0).map_err(|_| std::io::Error::last_os_error())
-        }
+        unsafe { FlushFileBuffers(self.0).map_err(|_| std::io::Error::last_os_error()) }
     }
 }

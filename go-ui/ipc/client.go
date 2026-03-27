@@ -64,6 +64,28 @@ func (c *Client) GetStats() ([]types.ProcessFlow, error) {
 	return resp.Data, nil
 }
 
+// GetHistory requests persisted daily usage history from Rust core.
+func (c *Client) GetHistory() ([]types.DailyUsage, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	req := types.IpcRequest{Command: "get_history"}
+	if err := c.sendRequest(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.readResponse()
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.Type == "error" {
+		return nil, fmt.Errorf("server error: %s", resp.Error)
+	}
+
+	return resp.History, nil
+}
+
 // Ping checks if the Rust core is responsive.
 func (c *Client) Ping() error {
 	c.mu.Lock()

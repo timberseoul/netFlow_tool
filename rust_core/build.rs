@@ -27,7 +27,12 @@ fn main() {
         let dst = target_dir.join(file);
         if src.exists() {
             fs::copy(&src, &dst).unwrap_or_else(|e| {
-                panic!("Failed to copy {} to {}: {}", src.display(), dst.display(), e)
+                panic!(
+                    "Failed to copy {} to {}: {}",
+                    src.display(),
+                    dst.display(),
+                    e
+                )
             });
             println!("cargo:warning=Copied {} to {}", file, dst.display());
         } else {

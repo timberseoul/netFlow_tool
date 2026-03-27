@@ -1,5 +1,12 @@
 package types
 
+// DailyUsage represents one day's total upload/download usage.
+type DailyUsage struct {
+	Date     string `json:"date"`
+	Upload   uint64 `json:"upload"`
+	Download uint64 `json:"download"`
+}
+
 // ProcessFlow represents per-process network statistics from the Rust core.
 type ProcessFlow struct {
 	PID           uint32  `json:"pid"`
@@ -14,9 +21,10 @@ type ProcessFlow struct {
 
 // IpcResponse is the JSON message received from Rust.
 type IpcResponse struct {
-	Type  string        `json:"type"`
-	Data  []ProcessFlow `json:"data,omitempty"`
-	Error string        `json:"error,omitempty"`
+	Type    string        `json:"type"`
+	Data    []ProcessFlow `json:"data,omitempty"`
+	History []DailyUsage  `json:"history,omitempty"`
+	Error   string        `json:"error,omitempty"`
 }
 
 // IpcRequest is the JSON message sent to Rust.

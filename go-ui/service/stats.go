@@ -13,12 +13,14 @@ import (
 // The UI reads cached results via Snapshot() — zero coupling between
 // IPC latency and UI refresh rate.
 type StatsService struct {
-	client   *ipc.Client
-	mu       sync.RWMutex
-	stats    []types.ProcessFlow
-	lastErr  error
-	interval time.Duration
-	stopCh   chan struct{}
+	client     *ipc.Client
+	mu         sync.RWMutex
+	stats      []types.ProcessFlow
+	history    []types.DailyUsage
+	lastErr    error
+	historyErr error
+	interval   time.Duration
+	stopCh     chan struct{}
 }
 
 // NewStatsService creates a new stats polling service.
@@ -35,10 +37,13 @@ func NewStatsService(client *ipc.Client, interval time.Duration) *StatsService {
 func (s *StatsService) Start() {
 	// Do an initial fetch so the UI has data right away.
 	s.poll()
+	s.pollHistory()
 
 	go func() {
 		ticker := time.NewTicker(s.interval)
 		defer ticker.Stop()
+		historyTicker := time.NewTicker(time.Minute)
+		defer historyTicker.Stop()
 
 		for {
 			select {
@@ -46,6 +51,8 @@ func (s *StatsService) Start() {
 				return
 			case <-ticker.C:
 				s.poll()
+			case <-historyTicker.C:
+				s.pollHistory()
 			}
 		}
 	}()
@@ -66,6 +73,20 @@ func (s *StatsService) poll() {
 	s.mu.Unlock()
 }
 
+// pollHistory fetches persisted daily usage history from the Rust core.
+func (s *StatsService) pollHistory() {
+	history, err := s.client.GetHistory()
+	s.mu.Lock()
+	if err != nil {
+		log.Printf("StatsService: history poll error: %v", err)
+		s.historyErr = err
+	} else {
+		s.history = history
+		s.historyErr = nil
+	}
+	s.mu.Unlock()
+}
+
 // Snapshot returns a copy of the latest stats and the last error (if any).
 // This is called by the UI on every tick — it is non-blocking and O(n).
 func (s *StatsService) Snapshot() ([]types.ProcessFlow, error) {
@@ -74,6 +95,15 @@ func (s *StatsService) Snapshot() ([]types.ProcessFlow, error) {
 	result := make([]types.ProcessFlow, len(s.stats))
 	copy(result, s.stats)
 	return result, s.lastErr
+}
+
+// SnapshotHistory returns a copy of the latest persisted history.
+func (s *StatsService) SnapshotHistory() ([]types.DailyUsage, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]types.DailyUsage, len(s.history))
+	copy(result, s.history)
+	return result, s.historyErr
 }
 
 // Stop stops the polling goroutine.

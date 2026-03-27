@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::stats::flow_stat::ProcessStats;
+use crate::stats::{daily_usage::DailyUsageRecord, flow_stat::ProcessStats};
 
 /// Message sent from Rust → Go over the named pipe.
 #[derive(Debug, Clone, Serialize)]
@@ -11,6 +11,9 @@ pub struct IpcResponse {
     /// Present when type == "stats"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<Vec<ProcessStats>>,
+    /// Present when type == "history"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub history: Option<Vec<DailyUsageRecord>>,
     /// Present when type == "error"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -37,6 +40,7 @@ impl IpcResponse {
         Self {
             msg_type: "stats",
             data: Some(data),
+            history: None,
             error: None,
         }
     }
@@ -46,6 +50,25 @@ impl IpcResponse {
         Self {
             msg_type: "stats",
             data: Some(data.to_vec()),
+            history: None,
+            error: None,
+        }
+    }
+
+    pub fn history(data: Vec<DailyUsageRecord>) -> Self {
+        Self {
+            msg_type: "history",
+            data: None,
+            history: Some(data),
+            error: None,
+        }
+    }
+
+    pub fn history_ref(data: &[DailyUsageRecord]) -> Self {
+        Self {
+            msg_type: "history",
+            data: None,
+            history: Some(data.to_vec()),
             error: None,
         }
     }
@@ -54,6 +77,7 @@ impl IpcResponse {
         Self {
             msg_type: "error",
             data: None,
+            history: None,
             error: Some(msg.to_string()),
         }
     }
@@ -62,6 +86,7 @@ impl IpcResponse {
         Self {
             msg_type: "ack",
             data: None,
+            history: None,
             error: None,
         }
     }

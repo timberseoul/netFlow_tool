@@ -16,11 +16,19 @@ import (
 // by the StatsService background goroutine.
 type tickMsg time.Time
 
+const (
+	modeRealtime = "realtime"
+	modeHistory  = "history"
+)
+
 // Model is the bubbletea model for the TUI.
 type Model struct {
 	statsSvc       *service.StatsService
 	flows          []types.ProcessFlow
+	history        []types.DailyUsage
 	err            error
+	historyErr     error
+	mode           string
 	width          int
 	height         int
 	sortBy         string // "download", "upload", "name", "pid"
@@ -35,10 +43,14 @@ type Model struct {
 func NewModel(statsSvc *service.StatsService) Model {
 	// Read initial data so the first frame has content.
 	flows, lastErr := statsSvc.Snapshot()
+	history, historyErr := statsSvc.SnapshotHistory()
 	return Model{
 		statsSvc:       statsSvc,
 		flows:          flows,
+		history:        history,
 		err:            lastErr,
+		historyErr:     historyErr,
+		mode:           modeRealtime,
 		sortBy:         "download",
 		sortAsc:        false,
 		filterCategory: "",
@@ -60,28 +72,63 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
+		case "tab":
+			if m.mode == modeRealtime {
+				m.mode = modeHistory
+				m.err = m.historyErr
+			} else {
+				m.mode = modeRealtime
+				flows, lastErr := m.statsSvc.Snapshot()
+				m.flows = flows
+				m.err = lastErr
+			}
+			m.scrollOffset = 0
 		case "s":
+			if m.mode != modeRealtime {
+				break
+			}
 			if m.sortBy == "download" {
 				m.sortBy = "upload"
 			} else {
 				m.sortBy = "download"
 			}
 		case "n":
+			if m.mode != modeRealtime {
+				break
+			}
 			m.sortBy = "name"
 		case "p":
+			if m.mode != modeRealtime {
+				break
+			}
 			m.sortBy = "pid"
 		case "r":
+			if m.mode != modeRealtime {
+				break
+			}
 			m.sortAsc = !m.sortAsc
 		case "1":
+			if m.mode != modeRealtime {
+				break
+			}
 			m.filterCategory = ""
 			m.scrollOffset = 0
 		case "2":
+			if m.mode != modeRealtime {
+				break
+			}
 			m.filterCategory = "user"
 			m.scrollOffset = 0
 		case "3":
+			if m.mode != modeRealtime {
+				break
+			}
 			m.filterCategory = "system"
 			m.scrollOffset = 0
 		case "4":
+			if m.mode != modeRealtime {
+				break
+			}
 			m.filterCategory = "service"
 			m.scrollOffset = 0
 		case "up", "k":
@@ -111,8 +158,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Read the latest cached stats from the background service.
 		// This is non-blocking — no IPC happens here.
 		flows, lastErr := m.statsSvc.Snapshot()
+		history, historyErr := m.statsSvc.SnapshotHistory()
 		m.flows = flows
+		m.history = history
 		m.err = lastErr
+		m.historyErr = historyErr
+		if m.mode == modeHistory {
+			m.err = historyErr
+		} else {
+			m.err = lastErr
+		}
+		if m.mode == modeRealtime {
+			m.totalRows = len(m.flows)
+		} else {
+			m.totalRows = len(m.history)
+		}
 		return m, tickCmd()
 	}
 
