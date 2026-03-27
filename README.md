@@ -59,132 +59,10 @@ cd rust_core
 cargo fmt
 cargo clippy -- -D warnings
 
-# Go 格式化/测试
+# Go 格式化
 cd ..\go-ui
 gofmt -w .
-go test ./...
-
-# Rust 单元测试
-cd ..\rust_core
-cargo test
-
-# 一次跑完整测试（推荐）
-cd ..\rust_core
-cargo test
-cd ..\go-ui
-go test ./...
 ```
-
-## 自动化测试说明
-
-当前仓库已经内置基础自动化测试，分为两部分：
-
-### Rust 测试
-- [rust_core/src/divert/parser.rs](rust_core/src/divert/parser.rs)：
-  - IPv4 TCP 解析
-  - IPv6 UDP 解析
-  - 非 TCP/UDP 报文过滤
-- [rust_core/src/stats/flow_stat.rs](rust_core/src/stats/flow_stat.rs)：
-  - 聚合快照累计值与速率重置
-  - 进程名称/分类刷新
-- [rust_core/src/ipc/protocol.rs](rust_core/src/ipc/protocol.rs)：
-  - IPC 请求反序列化
-  - IPC 响应序列化
-
-运行方式：
-
-```powershell
-cd rust_core
-cargo test
-```
-
-如果只想跑单个测试模块：
-
-```powershell
-cd rust_core
-cargo test parser
-cargo test flow_stat
-cargo test protocol
-```
-
-### Go 测试
-- [go-ui/ui/model_test.go](go-ui/ui/model_test.go)：
-  - 速率格式化
-  - 流量格式化
-  - 排序逻辑
-- [go-ui/types/flow_test.go](go-ui/types/flow_test.go)：
-  - IPC JSON 编解码
-
-运行方式：
-
-```powershell
-cd go-ui
-go test ./...
-```
-
-如果只想跑某个包：
-
-```powershell
-cd go-ui
-go test ./ui
-go test ./types
-```
-
-## 测试教程（推荐流程）
-
-### 1. 日常开发时
-每改完一小步，先跑对应语言的测试：
-
-```powershell
-# 改 Rust 后
-cd rust_core
-cargo test
-
-# 改 Go 后
-cd ..\go-ui
-go test ./...
-```
-
-### 2. 提交前
-建议按下面顺序完整检查：
-
-```powershell
-cd rust_core
-cargo fmt
-cargo test
-
-cd ..\go-ui
-gofmt -w .
-go test ./...
-
-cd ..
-.\scripts\build.ps1
-```
-
-### 3. 如何理解测试失败
-- `parser` 失败：通常是 IPv4/IPv6 报文解析逻辑改坏了
-- `flow_stat` 失败：通常是统计累积、速率重置、状态切换逻辑有回归
-- `protocol` / `types` 失败：通常是 Rust/Go IPC JSON 协议字段改动不兼容
-- `ui` 失败：通常是排序或格式化输出行为发生变化
-
-### 4. 新增测试的建议写法
-- Rust：优先在对应模块文件底部添加 `#[cfg(test)] mod tests`
-- Go：优先在对应包内增加 `*_test.go`
-- 尽量测试“纯逻辑函数”，避免依赖 WinDivert、命名管道、管理员权限
-- 每修一个 bug，补一个最小复现测试，防止以后回归
-
-## CI 自动测试
-
-仓库已添加 GitHub Actions 工作流：
-- [ci.yml](.github/workflows/ci.yml)
-
-触发时机：
-- push 到 `main` / `master`
-- 提交 Pull Request
-
-CI 当前会自动执行：
-- `cargo test`
-- `go test ./...`
 
 ## 运行机制（简述）
 1. Rust 使用 WinDivert 复制 TCP/UDP 包并解析。
@@ -193,6 +71,7 @@ CI 当前会自动执行：
 4. Go 后台轮询缓存，TUI 只读缓存并渲染。
 
 ## 已知限制
+- 当前仓库没有内置自动化测试用例（需手动验证）。
 - 目前以监控展示为主，限速逻辑仍在完善中。
 
 ## 故障排查
