@@ -1,4 +1,4 @@
-module netlimiter-ui
+module netFlow_tool-ui
 
 go 1.21
 

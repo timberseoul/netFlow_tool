@@ -9,7 +9,7 @@ use log::{error, info};
 use super::protocol::{IpcRequest, IpcResponse};
 use crate::stats::flow_stat::ProcessStats;
 
-const PIPE_NAME: &str = r"\\.\pipe\netlimiter_ipc";
+const PIPE_NAME: &str = r"\\.\pipe\netFlow_tool_ipc";
 
 /// Start the named pipe server on a background thread.
 /// It listens for JSON requests from the Go TUI and responds with stats.

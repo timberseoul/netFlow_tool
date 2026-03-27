@@ -9,10 +9,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"golang.org/x/sys/windows"
 
-	"netlimiter-ui/core"
-	"netlimiter-ui/ipc"
-	"netlimiter-ui/service"
-	"netlimiter-ui/ui"
+	"netFlow_tool-ui/core"
+	"netFlow_tool-ui/ipc"
+	"netFlow_tool-ui/service"
+	"netFlow_tool-ui/ui"
 )
 
 type adminHintModel struct {
@@ -70,13 +70,13 @@ func main() {
 	launcher := core.NewLauncher()
 	if err := launcher.Start(); err != nil {
 		if isAccessDenied(err) {
-			showHint("当前会话无权限启动 NetLimiter 核心进程。",
+			showHint("当前会话无权限启动 netFlow_tool 核心进程。",
 				"请以管理员身份运行本程序（右键→以管理员身份运行）。")
 			os.Exit(1)
 		}
 		showHint(
 			fmt.Sprintf("无法启动核心进程：%v", err),
-			"请确认 netlimiter-core.exe 与本程序在同一目录，并以管理员身份运行。",
+			"请确认 netFlow_tool-core.exe 与本程序在同一目录，并以管理员身份运行。",
 		)
 		os.Exit(1)
 	}
@@ -90,11 +90,11 @@ func main() {
 	client, err := ipc.NewClient()
 	if err != nil {
 		if isAccessDenied(err) {
-			showHint("当前会话无权限访问 NetLimiter 核心进程。", "请使用管理员权限重新运行。")
+			showHint("当前会话无权限访问 netFlow_tool 核心进程。", "请使用管理员权限重新运行。")
 			os.Exit(1)
 		}
 		showHint(
-			fmt.Sprintf("无法连接 NetLimiter 核心进程：%v", err),
+			fmt.Sprintf("无法连接 netFlow_tool 核心进程：%v", err),
 			"核心进程可能启动失败，请以管理员身份重新运行。",
 		)
 		os.Exit(1)
@@ -104,7 +104,7 @@ func main() {
 	// Ping to verify connection
 	if err := client.Ping(); err != nil {
 		if isAccessDenied(err) {
-			showHint("当前会话无权限访问 NetLimiter 核心进程。", "请使用管理员权限重新运行。")
+			showHint("当前会话无权限访问 netFlow_tool 核心进程。", "请使用管理员权限重新运行。")
 			os.Exit(1)
 		}
 		showHint(

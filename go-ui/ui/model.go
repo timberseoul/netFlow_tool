@@ -7,8 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"netlimiter-ui/service"
-	"netlimiter-ui/types"
+	"netFlow_tool-ui/service"
+	"netFlow_tool-ui/types"
 )
 
 // tickMsg triggers a UI refresh at a fixed interval.

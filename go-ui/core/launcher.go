@@ -1,4 +1,4 @@
-// Package core manages the lifecycle of the Rust netlimiter-core process.
+// Package core manages the lifecycle of the Rust netFlow_tool-core process.
 // The UI automatically launches the core on startup and kills it on exit.
 package core
 
@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	coreBinary = "netlimiter-core.exe"
-	pipeName   = `\\.\pipe\netlimiter_ipc`
+	coreBinary = "netFlow_tool-core.exe"
+	pipeName   = `\\.\pipe\netFlow_tool_ipc`
 	// Maximum time to wait for the core to create the named pipe.
 	pipeReadyTimeout = 8 * time.Second
 	// Polling interval while waiting for the pipe.
@@ -38,7 +38,7 @@ func NewLauncher() *Launcher {
 // Start ensures the Rust core is running.
 //
 // 1. If the named pipe already exists (core already running), skip launch.
-// 2. Otherwise, find netlimiter-core.exe next to this exe and start it.
+// 2. Otherwise, find netFlow_tool-core.exe next to this exe and start it.
 // 3. Wait until the pipe is available (with timeout).
 //
 // Returns an error if the core cannot be started or becomes ready.

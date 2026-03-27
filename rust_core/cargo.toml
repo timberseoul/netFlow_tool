@@ -1,5 +1,5 @@
 [package]
-name = "netlimiter-core"
+name = "netFlow_tool-core"
 version = "0.1.0"
 edition = "2021"
 

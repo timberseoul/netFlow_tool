@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"netlimiter-ui/types"
+	"netFlow_tool-ui/types"
 )
 
 var (
@@ -100,7 +100,7 @@ func (m Model) View() string {
 	var b strings.Builder
 
 	// Title bar
-	title := titleStyle.Render(" ⚡ NetLimiter — Real-time Network Monitor ")
+	title := titleStyle.Render(" ⚡ netFlow_tool — Real-time Network Monitor ")
 	b.WriteString(title + "\n\n")
 
 	// Error display

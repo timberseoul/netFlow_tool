@@ -2,8 +2,8 @@ package service
 
 import (
 	"log"
-	"netlimiter-ui/ipc"
-	"netlimiter-ui/types"
+	"netFlow_tool-ui/ipc"
+	"netFlow_tool-ui/types"
 	"sync"
 	"time"
 )

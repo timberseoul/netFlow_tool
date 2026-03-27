@@ -1,9 +1,9 @@
-# Build script for NetLimiter
+# Build script for netFlow_tool
 # Run as Administrator
 
 $ErrorActionPreference = "Stop"
 
-Write-Host "=== Building NetLimiter ===" -ForegroundColor Cyan
+Write-Host "=== Building netFlow_tool ===" -ForegroundColor Cyan
 
 $uiSourcePng = "$PSScriptRoot\..\assets\FxemojiLightningmood.png"
 $coreSourcePng = "$PSScriptRoot\..\assets\LogosCoreosIcon.png"
@@ -102,7 +102,7 @@ if ((Test-Path $uiSourcePng) -and (Test-Path $coreSourcePng)) {
 }
 
 # Kill any running instances first to release file locks
-$procs = @("netlimiter-core", "netlimiter-ui")
+$procs = @("netFlow_tool-core", "netFlow_tool-ui")
 foreach ($p in $procs) {
     $running = Get-Process -Name $p -ErrorAction SilentlyContinue
     if ($running) {
@@ -129,7 +129,7 @@ Write-Host "Rust core built successfully." -ForegroundColor Green
 Write-Host "`n[2/2] Building Go TUI..." -ForegroundColor Yellow
 Push-Location "$PSScriptRoot\..\go-ui"
 go mod tidy
-go build -ldflags="-s -w" -o "..\build\netlimiter-ui.exe" .
+go build -ldflags="-s -w" -o "..\build\netFlow_tool-ui.exe" .
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Go build failed!" -ForegroundColor Red
     Pop-Location
@@ -143,7 +143,7 @@ $buildDir = "$PSScriptRoot\..\build"
 New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
 
 $filesToCopy = @(
-    @{ Src = "$PSScriptRoot\..\rust_core\target\release\netlimiter-core.exe"; Dst = "$buildDir\" },
+    @{ Src = "$PSScriptRoot\..\rust_core\target\release\netFlow_tool-core.exe"; Dst = "$buildDir\" },
     @{ Src = "$PSScriptRoot\..\rust_core\libs\WinDivert.dll";                Dst = "$buildDir\" },
     @{ Src = "$PSScriptRoot\..\rust_core\libs\WinDivert64.sys";              Dst = "$buildDir\" }
 )
@@ -165,7 +165,7 @@ foreach ($f in $filesToCopy) {
 
 Write-Host "`n=== Build complete ===" -ForegroundColor Cyan
 Write-Host "Output: $buildDir" -ForegroundColor White
-Write-Host "  - netlimiter-core.exe  (Rust capture engine)" -ForegroundColor White
-Write-Host "  - netlimiter-ui.exe    (Go TUI)" -ForegroundColor White
+Write-Host "  - netFlow_tool-core.exe  (Rust capture engine)" -ForegroundColor White
+Write-Host "  - netFlow_tool-ui.exe    (Go TUI)" -ForegroundColor White
 Write-Host "  - WinDivert.dll        (WinDivert library)" -ForegroundColor White
 Write-Host "  - WinDivert64.sys      (WinDivert driver)" -ForegroundColor White

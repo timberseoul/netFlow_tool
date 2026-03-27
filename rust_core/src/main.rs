@@ -23,7 +23,7 @@ fn main() {
         .format_timestamp_millis()
         .init();
 
-    info!("NetLimiter Core starting...");
+    info!("netFlow_tool Core starting...");
 
     // Shared state — lock-free where possible
     let running = Arc::new(AtomicBool::new(true));
@@ -118,7 +118,7 @@ fn main() {
     let _ = capture_handle.join();
     let _ = ipc_handle.join();
 
-    info!("NetLimiter Core stopped.");
+    info!("netFlow_tool Core stopped.");
 }
 
 /// Process a single parsed packet: PID lookup → record.

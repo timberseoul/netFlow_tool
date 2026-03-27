@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"netlimiter-ui/types"
+	"netFlow_tool-ui/types"
 
 	winio "github.com/Microsoft/go-winio"
 )
