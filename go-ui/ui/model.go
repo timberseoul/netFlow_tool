@@ -17,9 +17,39 @@ import (
 type tickMsg time.Time
 
 const (
-	modeRealtime = "realtime"
-	modeHistory  = "history"
+	modeRealtime    = "realtime"
+	modeHistory     = "history"
+	scrollWheelStep = 3
+	sortMenuWidth   = 24
+
+	menuNone   = ""
+	menuSort   = "sort"
+	menuFilter = "filter"
+
+	historySortDate  = "date"
+	historySortTotal = "total"
 )
+
+var sortMenuItems = []struct {
+	key   string
+	label string
+}{
+	{"download", "Download"},
+	{"upload", "Upload"},
+	{"name", "Name"},
+	{"pid", "PID"},
+	{"order", "Order"},
+}
+
+var filterMenuItems = []struct {
+	key   string
+	label string
+}{
+	{"", "All"},
+	{"user", "User"},
+	{"system", "System"},
+	{"service", "Service"},
+}
 
 // Model is the bubbletea model for the TUI.
 type Model struct {
@@ -33,10 +63,17 @@ type Model struct {
 	height         int
 	sortBy         string // "download", "upload", "name", "pid"
 	sortAsc        bool
+	historySortBy  string
 	quitting       bool
 	filterCategory string // "" = all, "user", "system", "service"
 	scrollOffset   int    // vertical scroll position (0 = top)
 	totalRows      int    // total renderable rows (for scroll bounds)
+
+	activeMenu string
+	menuIndex  int
+
+	draggingScrollbar  bool
+	scrollbarDragDelta int
 }
 
 // NewModel creates a new TUI model backed by a StatsService.
@@ -53,9 +90,11 @@ func NewModel(statsSvc *service.StatsService) Model {
 		mode:           modeRealtime,
 		sortBy:         "download",
 		sortAsc:        false,
+		historySortBy:  historySortDate,
 		filterCategory: "",
 		width:          120,
 		height:         30,
+		activeMenu:     menuNone,
 	}
 }
 
@@ -72,10 +111,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
+		}
+
+		if m.activeMenu != menuNone {
+			m.handleMenuKey(msg.String())
+			m.clampScroll()
+			return m, nil
+		}
+
+		switch msg.String() {
 		case "tab":
 			if m.mode == modeRealtime {
 				m.mode = modeHistory
 				m.err = m.historyErr
+				m.activeMenu = menuNone
 			} else {
 				m.mode = modeRealtime
 				flows, lastErr := m.statsSvc.Snapshot()
@@ -83,76 +132,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.err = lastErr
 			}
 			m.scrollOffset = 0
-		case "s":
-			if m.mode != modeRealtime {
-				break
+		case "s", "S":
+			if m.mode == modeRealtime {
+				m.openSortMenu()
 			}
-			if m.sortBy == "download" {
-				m.sortBy = "upload"
-			} else {
-				m.sortBy = "download"
+		case "f", "F":
+			if m.mode == modeRealtime {
+				m.openFilterMenu()
 			}
-		case "n":
-			if m.mode != modeRealtime {
-				break
-			}
-			m.sortBy = "name"
-		case "p":
-			if m.mode != modeRealtime {
-				break
-			}
-			m.sortBy = "pid"
-		case "r":
-			if m.mode != modeRealtime {
-				break
-			}
-			m.sortAsc = !m.sortAsc
-		case "1":
-			if m.mode != modeRealtime {
-				break
-			}
-			m.filterCategory = ""
-			m.scrollOffset = 0
-		case "2":
-			if m.mode != modeRealtime {
-				break
-			}
-			m.filterCategory = "user"
-			m.scrollOffset = 0
-		case "3":
-			if m.mode != modeRealtime {
-				break
-			}
-			m.filterCategory = "system"
-			m.scrollOffset = 0
-		case "4":
-			if m.mode != modeRealtime {
-				break
-			}
-			m.filterCategory = "service"
-			m.scrollOffset = 0
-		case "up", "k":
-			if m.scrollOffset > 0 {
-				m.scrollOffset--
-			}
-		case "down", "j":
-			m.scrollOffset++
-		case "pgup":
-			m.scrollOffset -= 10
-			if m.scrollOffset < 0 {
+		case "t", "T":
+			if m.mode == modeHistory {
+				m.historySortBy = historySortTotal
 				m.scrollOffset = 0
 			}
-		case "pgdown":
-			m.scrollOffset += 10
-		case "home":
-			m.scrollOffset = 0
-		case "end":
-			m.scrollOffset = m.totalRows
+		case "d", "D":
+			if m.mode == modeHistory {
+				m.historySortBy = historySortDate
+				m.scrollOffset = 0
+			}
 		}
+		m.clampScroll()
+
+	case tea.MouseMsg:
+		m.handleMouse(msg)
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.clampScroll()
 
 	case tickMsg:
 		// Read the latest cached stats from the background service.
@@ -168,15 +175,104 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.err = lastErr
 		}
-		if m.mode == modeRealtime {
-			m.totalRows = len(m.flows)
-		} else {
-			m.totalRows = len(m.history)
-		}
+		m.totalRows = m.totalContentRows()
+		m.clampScroll()
 		return m, tickCmd()
 	}
 
 	return m, nil
+}
+
+func (m *Model) handleMenuKey(key string) {
+	switch key {
+	case "esc":
+		m.activeMenu = menuNone
+	case "tab":
+		m.activeMenu = menuNone
+		if m.mode == modeRealtime {
+			m.mode = modeHistory
+			m.err = m.historyErr
+			m.scrollOffset = 0
+		}
+	case "up":
+		if m.menuIndex > 0 {
+			m.menuIndex--
+		}
+	case "down":
+		maxIndex := m.currentMenuLength() - 1
+		if m.menuIndex < maxIndex {
+			m.menuIndex++
+		}
+	case "enter":
+		m.applyMenuSelection()
+	case "s", "S":
+		if m.activeMenu == menuSort {
+			m.activeMenu = menuNone
+		} else if m.mode == modeRealtime {
+			m.openSortMenu()
+		}
+	case "f", "F":
+		if m.activeMenu == menuFilter {
+			m.activeMenu = menuNone
+		} else if m.mode == modeRealtime {
+			m.openFilterMenu()
+		}
+	}
+}
+
+func (m *Model) openSortMenu() {
+	m.activeMenu = menuSort
+	m.menuIndex = m.currentSortMenuIndex()
+}
+
+func (m *Model) openFilterMenu() {
+	m.activeMenu = menuFilter
+	m.menuIndex = m.currentFilterMenuIndex()
+}
+
+func (m *Model) applyMenuSelection() {
+	switch m.activeMenu {
+	case menuSort:
+		selected := sortMenuItems[m.menuIndex].key
+		if selected == "order" {
+			m.sortAsc = !m.sortAsc
+		} else {
+			m.sortBy = selected
+		}
+	case menuFilter:
+		m.filterCategory = filterMenuItems[m.menuIndex].key
+		m.scrollOffset = 0
+	}
+	m.activeMenu = menuNone
+}
+
+func (m Model) currentSortMenuIndex() int {
+	for idx, item := range sortMenuItems {
+		if item.key == m.sortBy {
+			return idx
+		}
+	}
+	return 0
+}
+
+func (m Model) currentFilterMenuIndex() int {
+	for idx, item := range filterMenuItems {
+		if item.key == m.filterCategory {
+			return idx
+		}
+	}
+	return 0
+}
+
+func (m Model) currentMenuLength() int {
+	switch m.activeMenu {
+	case menuSort:
+		return len(sortMenuItems)
+	case menuFilter:
+		return len(filterMenuItems)
+	default:
+		return 0
+	}
 }
 
 // tickCmd schedules the next UI refresh.
@@ -213,6 +309,175 @@ func (m *Model) sortFlows() []types.ProcessFlow {
 	})
 
 	return flows
+}
+
+func (m *Model) handleMouse(msg tea.MouseMsg) {
+	switch {
+	case msg.Button == tea.MouseButtonWheelUp && msg.Action == tea.MouseActionPress:
+		m.scrollBy(-scrollWheelStep)
+	case msg.Button == tea.MouseButtonWheelDown && msg.Action == tea.MouseActionPress:
+		m.scrollBy(scrollWheelStep)
+	case msg.Button == tea.MouseButtonLeft:
+		layout := m.currentScrollLayout()
+		if layout.total <= layout.height {
+			if msg.Action == tea.MouseActionRelease {
+				m.draggingScrollbar = false
+			}
+			return
+		}
+
+		switch msg.Action {
+		case tea.MouseActionPress:
+			if !m.isScrollbarHit(msg.X, msg.Y, layout) {
+				m.draggingScrollbar = false
+				return
+			}
+
+			row := msg.Y - layout.top
+			if row >= layout.thumbStart && row < layout.thumbStart+layout.thumbHeight {
+				m.draggingScrollbar = true
+				m.scrollbarDragDelta = row - layout.thumbStart
+				return
+			}
+
+			targetThumbStart := row - layout.thumbHeight/2
+			m.scrollOffset = scrollOffsetFromThumb(layout.total, layout.height, targetThumbStart)
+			m.clampScroll()
+
+			updatedLayout := m.currentScrollLayout()
+			m.draggingScrollbar = true
+			m.scrollbarDragDelta = row - updatedLayout.thumbStart
+			if m.scrollbarDragDelta < 0 {
+				m.scrollbarDragDelta = 0
+			}
+			if m.scrollbarDragDelta >= updatedLayout.thumbHeight {
+				m.scrollbarDragDelta = updatedLayout.thumbHeight - 1
+			}
+		case tea.MouseActionMotion:
+			if !m.draggingScrollbar {
+				return
+			}
+			targetThumbStart := msg.Y - layout.top - m.scrollbarDragDelta
+			m.scrollOffset = scrollOffsetFromThumb(layout.total, layout.height, targetThumbStart)
+			m.clampScroll()
+		case tea.MouseActionRelease:
+			m.draggingScrollbar = false
+		}
+	case msg.Action == tea.MouseActionRelease:
+		m.draggingScrollbar = false
+	}
+}
+
+func (m *Model) scrollBy(delta int) {
+	m.scrollOffset += delta
+	m.clampScroll()
+}
+
+func (m *Model) clampScroll() {
+	layout := m.currentScrollLayout()
+	m.scrollOffset = layout.offset
+	m.totalRows = layout.total
+}
+
+func (m Model) currentScrollLayout() scrollLayout {
+	return newScrollLayout(m.contentTopLine(), m.viewportHeight(), m.totalContentRows(), m.scrollOffset)
+}
+
+func (m Model) viewportHeight() int {
+	return m.height - m.contentTopLine() - m.bottomReservedLines()
+}
+
+func (m Model) contentTopLine() int {
+	if m.mode == modeHistory {
+		top := 5
+		if m.historyErr != nil {
+			top += 3
+		}
+		return top
+	}
+
+	top := 6
+	if m.err != nil {
+		top += 3
+	}
+	if m.activeMenu == menuSort {
+		top += len(sortMenuItems) + 2
+	}
+	if m.activeMenu == menuFilter {
+		top += len(filterMenuItems) + 2
+	}
+	return top
+}
+
+func (m Model) bottomReservedLines() int {
+	return 4
+}
+
+func (m Model) totalContentRows() int {
+	if m.mode == modeHistory {
+		rows := len(m.history)
+		if rows == 0 {
+			return 1
+		}
+		return rows * 2
+	}
+
+	counts := make(map[string]int)
+	for _, f := range m.flows {
+		cat := f.Category
+		if cat == "" {
+			cat = "unknown"
+		}
+		if m.filterCategory != "" && cat != m.filterCategory {
+			continue
+		}
+		counts[cat]++
+	}
+
+	total := 0
+	for _, cat := range categoryOrder {
+		if counts[cat.key] == 0 {
+			continue
+		}
+		total += 2 + counts[cat.key]*2
+	}
+
+	if total == 0 {
+		return 1
+	}
+	return total
+}
+
+func (m Model) isScrollbarHit(x, y int, layout scrollLayout) bool {
+	if y < layout.top || y >= layout.top+layout.height {
+		return false
+	}
+	return x >= scrollbarHitMinX(m.width)
+}
+
+func currentSortLabel(sortBy string) string {
+	for _, item := range sortMenuItems {
+		if item.key == sortBy {
+			return item.label
+		}
+	}
+	return "Download"
+}
+
+func currentFilterLabel(filter string) string {
+	for _, item := range filterMenuItems {
+		if item.key == filter {
+			return item.label
+		}
+	}
+	return "All"
+}
+
+func currentSortDirection(sortAsc bool) string {
+	if sortAsc {
+		return "Asc"
+	}
+	return "Desc"
 }
 
 // formatSpeed converts bytes/sec to a human-readable string.
