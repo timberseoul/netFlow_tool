@@ -104,28 +104,6 @@ go build -o ..\build\netFlow_tool-ui.exe .
 - `build-windows.yml` 用于日常 CI 构建并上传 Actions artifact
 - `release-windows.yml` 用于推送 tag 后自动发布 GitHub Release
 
-## GitHub Release 自动发布
-
-当你推送符合 `v*` 规则的 tag 时，例如：
-
-```powershell
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-GitHub Actions 会自动：
-
-1. 在 Windows 环境构建项目
-2. 打包最终可分发文件
-3. 自动创建或更新同名 GitHub Release
-4. 将 zip 直接上传到 Release 页面
-
-Release 资产文件名格式为：
-
-- `netFlow_tool-windows-x64-v0.1.0.zip`
-
-如果只是普通提交、PR 或手动触发构建，则仍然主要通过 Actions artifact 获取构建产物。
-
 ## 运行机制
 
 ### 数据流
