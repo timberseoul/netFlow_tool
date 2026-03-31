@@ -1,95 +1,218 @@
-# netFlow_tool（Windows 终端版）
+# netFlow_tool
 
-一个轻量的 Windows 网络流量监控工具：
-- **Rust 核心**负责抓包、解析、聚合进程流量
-- **Go TUI**负责在终端实时展示上传/下载速率
+`netFlow_tool` 是一个面向 Windows 的终端网络流量监控工具，采用 **Rust 核心 + Go TUI** 双进程架构：
 
-通过命名管道 `\\.\\pipe\\netFlow_tool_ipc` 进行 JSON 通信。
+- **Rust core** 负责 WinDivert 抓包、协议解析、PID 映射、流量聚合与 IPC 服务
+- **Go UI** 负责拉起核心进程、轮询统计快照，并在终端中实时展示进程级上传/下载信息
 
-## 功能
-- 按进程统计上传/下载速度与累计流量
-- 终端实时刷新（默认 1 秒）
-- 按进程分类展示（User / System / Service）
-- Rust 与 UI 解耦，IPC 延迟不直接卡住界面
+项目通过 Windows 命名管道 `\\.\pipe\netFlow_tool_ipc` 以**单行 JSON**进行通信。
+
+## 功能概览
+
+- 按进程展示实时上传 / 下载速率
+- 展示累计上传 / 下载流量
+- 按 `User / System / Service` 分类查看进程
+- 提供历史流量统计页面
+- 提供终端内排序、筛选、退出 / 重启菜单
+- IPC 轮询与 UI 刷新解耦，避免界面因 IPC 阻塞而卡顿
 
 ## 项目结构
+
 ```text
 netFlow_tool/
-├─ rust_core/     # Rust 抓包与统计核心
-├─ go-ui/         # Go Bubble Tea 终端界面
-├─ scripts/       # 一键构建 / 运行脚本
-└─ build/         # 输出产物（exe、WinDivert 文件）
+├─ rust_core/                # Rust 抓包与聚合核心
+│  ├─ src/
+│  └─ libs/                  # WinDivert 运行时与导入库
+├─ go-ui/                    # Go Bubble Tea 终端 UI
+├─ scripts/                  # 本地构建 / 运行脚本
+├─ build/                    # 本地产物输出目录（生成物）
+└─ .github/workflows/        # GitHub Actions 工作流
 ```
 
-## 环境要求
-- Windows（需管理员权限运行）
-- Rust（MSVC 工具链）
+## 运行要求
+
+- Windows 10/11
+- 管理员权限运行
+- Rust MSVC toolchain
 - Go 1.21+
-- WinDivert 2.x（本仓库默认不包含该组件，需手动下载）：
-  - `WinDivert.dll`
-  - `WinDivert64.sys`
+
+> 管理员权限仅用于 **WinDivert 驱动抓包与监测**，不会涉及其他额外的系统级用途。
+
+## WinDivert 文件说明
+
+仓库现已包含项目运行与构建所需的 WinDivert 文件，位于 `rust_core/libs/`：
+
+- `WinDivert.dll`
+- `WinDivert64.sys`
+- `WinDivert.lib`
+
+其中：
+
+- `WinDivert.dll`：运行时动态库
+- `WinDivert64.sys`：内核驱动
+- `WinDivert.lib`：Rust 构建时使用的导入库
+
+如果你准备替换 WinDivert 版本，请确保这三个文件保持版本匹配。
 
 ## 快速开始
-在仓库根目录 PowerShell 执行：
+
+在仓库根目录的 PowerShell 中执行：
 
 ```powershell
-# 1) 构建 Rust + Go，并复制产物到 build/
+# 构建 Rust core + Go UI，并将最终产物复制到 build/
 .\scripts\build.ps1
 
-# 2) 启动核心 + TUI（管理员权限）
+# 运行终端 UI（UI 会自动拉起并管理 Rust core）
 .\scripts\run.ps1
 ```
 
-## 手动构建（可选）
+首次真正抓包时，需要以管理员权限运行。
+
+## 手动构建
+
+### 构建 Rust core
+
 ```powershell
-# Rust core
 cd rust_core
 $env:WINDIVERT_PATH = (Resolve-Path ".\libs").Path
 cargo build --release
+```
 
-# Go UI
-cd ..\go-ui
+### 构建 Go UI
+
+```powershell
+cd go-ui
 go build -o ..\build\netFlow_tool-ui.exe .
 ```
 
+## 输出产物
+
+执行 `.\scripts\build.ps1` 后，`build\` 目录下会生成：
+
+- `netFlow_tool-core.exe`
+- `netFlow_tool-ui.exe`
+- `WinDivert.dll`
+- `WinDivert64.sys`
+
+通常最终用户只需要解压 Actions 产物并运行 `netFlow_tool-ui.exe` 或 `run.ps1` 即可。
+
+## GitHub Actions 自动构建
+
+仓库已提供 GitHub Actions 工作流：`.github/workflows/build-windows.yml`
+
+触发方式：
+
+- push 到 `main`
+- Pull Request
+- 手动触发 `workflow_dispatch`
+
+工作流会在 `windows-latest` 上自动：
+
+1. 安装 Rust 与 Go
+2. 执行 `.\scripts\build.ps1`
+3. 打包 `build\` 目录内容
+4. 附带 `run.ps1`、`README.md`、`LICENSE`
+5. 上传可下载的 Windows 最终产物压缩包
+
+生成的 artifact 名称为：
+
+- `netFlow_tool-windows-x64`
+
+## 运行机制
+
+### 数据流
+
+```text
+Network
+  -> WinDivert
+  -> crossbeam channel
+  -> parser
+  -> PID mapper
+  -> FlowAggregator
+  -> IPC pipe server
+  -> Go StatsService
+  -> Bubble Tea UI
+```
+
+### 核心设计
+
+- Rust 抓包线程使用非阻塞 `try_send()`，避免卡住 WinDivert 队列
+- 主线程批量消费数据包，降低频繁同步开销
+- PID 映射器缓存系统连接表，提高 PID 查询效率
+- `FlowAggregator` 不主动删除条目，避免 UI 刷新时闪烁
+- Go UI 通过后台服务轮询快照，渲染线程只读缓存
+
 ## 常用开发命令
+
+### Rust
+
 ```powershell
-# Rust 格式化/检查
 cd rust_core
 cargo fmt
 cargo clippy -- -D warnings
-
-# Go 格式化
-cd ..\go-ui
-gofmt -w .
 ```
 
-## 运行机制（简述）
-1. Rust 使用 WinDivert 复制 TCP/UDP 包并解析。
-2. 按连接映射 PID，聚合为进程级统计。
-3. 每秒生成快照，通过命名管道发给 Go UI。
-4. Go 后台轮询缓存，TUI 只读缓存并渲染。
+### Go
 
-## 已知限制
-- 目前以监控展示为主，限速逻辑仍在完善中。
+```powershell
+cd go-ui
+gofmt -w .
+go test ./...
+```
+
+## 使用说明
+
+### 实时页面
+
+- `S`：打开排序菜单
+- `F`：打开筛选菜单
+- `Tab`：切换到历史页面
+- 鼠标滚轮：上下滚动
+- 拖动右侧滚动条：滚动列表
+
+### 历史页面
+
+- `T`：按总流量降序排序
+- `D`：按日期降序排序
+- `Tab`：切回实时页面
+
+### 退出菜单
+
+- `Q`：呼出退出菜单
+- `Up / Down`：选择 `Quit` 或 `Restart`
+- `Enter`：确认执行
+- `Esc`：返回上一层
 
 ## 故障排查
-- 提示连接失败：先确认 `netFlow_tool-core` 已启动，且使用管理员权限运行。
-- 无流量数据显示：检查 WinDivert 文件是否齐全、路径是否在 `rust_core/libs/`。
-- 构建报错：确认 Rust/Go 版本与 MSVC 工具链已安装。
 
-## 许可证
-- 本项目采用 **MIT License**，详见仓库根目录 `LICENSE`。
+### 提示需要管理员权限
 
-## 第三方依赖与合规说明（WinDivert）
-- 本项目依赖 WinDivert 驱动与库文件，但 **仓库默认不提交这些二进制文件**。
-- WinDivert 官方仓库：<https://github.com/basil00/WinDivert>
-- 你需要下载并放入 `rust_core/libs/` 的最小文件：
-  - `WinDivert.dll`
-  - `WinDivert64.sys`
-- 使用方式：
-  1. 从官方仓库的 Release 页面下载 WinDivert 压缩包。
-  2. 将上述 2 个文件复制到 `rust_core/libs/`。
-  3. 构建前设置环境变量：`$env:WINDIVERT_PATH = (Resolve-Path ".\\rust_core\\libs").Path`
-  4. 执行 `.\scripts\build.ps1` 和 `.\scripts\run.ps1`（管理员权限）。
-- 重新分发 WinDivert 文件前，请确认对应版本许可证条款并在发布说明中标注来源与版本。
+这是因为 WinDivert 抓包需要管理员权限。UI 已提供自动提权重启能力，可以按 `Q` 打开退出菜单后选择重启，或直接重新以管理员身份运行程序。
+
+### 看不到流量数据
+
+请检查：
+
+- 是否使用管理员权限启动
+- `build\` 目录中是否包含 `WinDivert.dll` 与 `WinDivert64.sys`
+- Rust core 是否已成功启动
+
+### 构建失败
+
+请检查：
+
+- 是否安装 Rust MSVC 工具链
+- 是否安装 Go 1.21+
+- `rust_core/libs/` 中的 WinDivert 文件是否完整
+
+## 已知限制
+
+- 当前以监控展示为主，限速逻辑尚未接入主流程
+- 同一时刻仅支持单个 UI 客户端连接 IPC
+- Windows 终端字体差异可能影响少量字符显示效果
+
+## 许可证与第三方组件
+
+- 本项目采用 `MIT License`
+- 项目依赖 WinDivert，请在发布和再分发时确认对应版本的许可证条款
+- WinDivert 官方项目：<https://github.com/basil00/WinDivert>

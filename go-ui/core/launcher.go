@@ -110,6 +110,13 @@ func (l *Launcher) CorePID() int {
 	return 0
 }
 
+// Detach tells the launcher not to kill the core on shutdown.
+// Useful when the UI is about to restart and the next instance should reuse
+// the already running core process.
+func (l *Launcher) Detach() {
+	l.owned = false
+}
+
 // waitForPipe polls for the named pipe to appear within the timeout.
 func (l *Launcher) waitForPipe() error {
 	deadline := time.Now().Add(pipeReadyTimeout)

@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 	"unsafe"
@@ -109,6 +111,24 @@ func relaunchAsAdmin() error {
 	return nil
 }
 
+func restartCurrentProcess() error {
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("无法获取当前程序路径: %w", err)
+	}
+
+	cmd := exec.Command(exePath)
+	cmd.Dir = filepath.Dir(exePath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("启动新实例失败: %w", err)
+	}
+
+	return nil
+}
+
 func main() {
 	if !isRunningAsAdmin() {
 		showAdminPrompt(
@@ -174,8 +194,17 @@ func main() {
 	model := ui.NewModel(statsSvc)
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
-	if _, err := p.Run(); err != nil {
+	finalModel, err := p.Run()
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
 		os.Exit(1)
+	}
+
+	if m, ok := finalModel.(ui.Model); ok && m.RestartRequested() {
+		launcher.Detach()
+		if err := restartCurrentProcess(); err != nil {
+			fmt.Fprintf(os.Stderr, "Restart failed: %v\n", err)
+			os.Exit(1)
+		}
 	}
 }

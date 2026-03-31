@@ -70,24 +70,12 @@ func (m Model) View() string {
 
 func (m Model) renderRealtimeView() string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render(" netFlow_tool — Real-time Network Monitor ") + "\n\n")
-	b.WriteString(renderModeTabs(m.mode) + "\n")
+	b.WriteString(titleStyle.Render(" netFlow_tool — Real-time Network Monitor ") + "\n")
+	b.WriteString(renderTopBar(m.mode, renderRealtimeControls(m)) + "\n")
 
 	if m.err != nil {
 		b.WriteString(errorStyle.Render(fmt.Sprintf("  Connection error: %v", m.err)) + "\n")
-		b.WriteString(errorStyle.Render("  Make sure the Rust core is running.") + "\n\n")
-	}
-
-	b.WriteString(renderRealtimeControls(m) + "\n")
-	if m.activeMenu == menuSort {
-		for _, line := range renderKeyboardMenu("Sort Menu", buildSortMenuLabels(m), m.menuIndex) {
-			b.WriteString(line + "\n")
-		}
-	}
-	if m.activeMenu == menuFilter {
-		for _, line := range renderKeyboardMenu("Filter Menu", buildFilterMenuLabels(m), m.menuIndex) {
-			b.WriteString(line + "\n")
-		}
+		b.WriteString(errorStyle.Render("  Make sure the Rust core is running.") + "\n")
 	}
 
 	b.WriteString("\n")
@@ -219,18 +207,20 @@ func (m Model) renderRealtimeView() string {
 	b.WriteString(helpStyle.Render(renderRealtimeHelp(m.activeMenu)) + "\n")
 	b.WriteString(rowStyle.Render(fmt.Sprintf("  Speed: ↑ %s  ↓ %s  |  Traffic: ↑ %s  ↓ %s  |  %d processes", formatSpeed(totalUp), formatSpeed(totalDown), formatBytes(totalUpBytes), formatBytes(totalDownBytes), count)) + "\n")
 
-	return b.String()
+	return m.applyMenuOverlay(b.String())
 }
 
 func (m Model) renderHistoryView() string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render(" netFlow_tool — Daily Traffic History ") + "\n\n")
-	b.WriteString(renderModeTabs(m.mode) + "\n")
+	b.WriteString(titleStyle.Render(" netFlow_tool — Daily Traffic History ") + "\n")
+	b.WriteString(renderTopBar(m.mode, renderHistoryControls(m)) + "\n")
 
 	if m.historyErr != nil {
 		b.WriteString(errorStyle.Render(fmt.Sprintf("  History load error: %v", m.historyErr)) + "\n")
-		b.WriteString(errorStyle.Render("  Showing the last successfully loaded history cache.") + "\n\n")
+		b.WriteString(errorStyle.Render("  Showing the last successfully loaded history cache.") + "\n")
 	}
+
+	b.WriteString("\n")
 
 	rows := sortedHistory(m.history, m.historySortBy)
 	header := fmt.Sprintf("  %-12s %-10s %-10s %-10s", "Date", "Upload", "Download", "Total")
@@ -267,10 +257,10 @@ func (m Model) renderHistoryView() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render(fmt.Sprintf("  [T] Total desc  [D] Date desc  [Tab] Realtime  [Q] Quit  |  Current: %s", currentHistorySortLabel(m.historySortBy))) + "\n")
+	b.WriteString(helpStyle.Render(fmt.Sprintf("  [T] Total desc  [D] Date desc  [Tab] Realtime  [Q] Exit menu  |  Current: %s", currentHistorySortLabel(m.historySortBy))) + "\n")
 	b.WriteString(rowStyle.Render(fmt.Sprintf("  Days: %d  |  Total Upload: %s  |  Total Download: %s", len(rows), formatBytes(totalUpload), formatBytes(totalDownload))) + "\n")
 
-	return b.String()
+	return m.applyMenuOverlay(b.String())
 }
 
 func renderRealtimeControls(m Model) string {
@@ -290,6 +280,14 @@ func renderRealtimeControls(m Model) string {
 	}
 
 	return sortLabel + "    " + filterLabel
+}
+
+func renderHistoryControls(m Model) string {
+	return controlStyle.Render(fmt.Sprintf("  Sort [T/D]: %s", currentHistorySortLabel(m.historySortBy)))
+}
+
+func renderTopBar(mode, controls string) string {
+	return "  " + renderModeTabs(mode) + "    " + controls
 }
 
 func renderKeyboardMenu(title string, items []string, selected int) []string {
@@ -330,11 +328,56 @@ func buildFilterMenuLabels(_ Model) []string {
 	return labels
 }
 
-func renderRealtimeHelp(activeMenu string) string {
-	if activeMenu == menuSort || activeMenu == menuFilter {
-		return "  [Up/Down] Select  [Enter] Confirm  [Esc] Close  [Tab] History  [Q] Quit"
+func buildExitMenuLabels() []string {
+	return []string{
+		"Quit",
+		"Restart",
 	}
-	return "  [S] Sort menu  [F] Filter menu  [Tab] History  [Q] Quit"
+}
+
+func renderRealtimeHelp(activeMenu string) string {
+	if activeMenu == menuExit {
+		return "  [Up/Down] Select  [Enter] Confirm  [Esc] Back  [Tab] History  [Ctrl+C] Force Quit"
+	}
+	if activeMenu == menuSort || activeMenu == menuFilter {
+		return "  [Up/Down] Select  [Enter] Confirm  [Esc] Close  [Q] Exit Menu  [Tab] History"
+	}
+	return "  [S] Sort menu  [F] Filter menu  [Tab] History  [Q] Exit menu"
+}
+
+func (m Model) applyMenuOverlay(base string) string {
+	if m.activeMenu == menuNone {
+		return base
+	}
+
+	overlayLines := m.activeMenuLines()
+	baseLines := strings.Split(base, "\n")
+	startRow := 2
+	for len(baseLines) < startRow+len(overlayLines) {
+		baseLines = append(baseLines, "")
+	}
+
+	for i, line := range overlayLines {
+		baseLines[startRow+i] = line
+	}
+
+	return strings.Join(baseLines, "\n")
+}
+
+func (m Model) activeMenuLines() []string {
+	switch m.activeMenu {
+	case menuSort:
+		lines := renderKeyboardMenu("Sort Menu", buildSortMenuLabels(m), m.menuIndex)
+		return append(lines, helpStyle.Render("  Up/Down to select, Enter to apply, Esc to close"))
+	case menuFilter:
+		lines := renderKeyboardMenu("Filter Menu", buildFilterMenuLabels(m), m.menuIndex)
+		return append(lines, helpStyle.Render("  Up/Down to select, Enter to apply, Esc to close"))
+	case menuExit:
+		lines := renderKeyboardMenu("Exit Menu", buildExitMenuLabels(), m.menuIndex)
+		return append(lines, helpStyle.Render("  Up/Down to select, Enter to confirm, Esc to go back"))
+	default:
+		return nil
+	}
 }
 
 func formatHistoryDate(date string) string {
@@ -352,7 +395,7 @@ func renderModeTabs(mode string) string {
 	} else {
 		history = activeFilterStyle.Render(" [History] ")
 	}
-	return "  " + realtime + " ↔ " + history
+	return realtime + " -> " + history
 }
 
 func clampViewport(offset, total, desiredHeight int) (int, int, int) {

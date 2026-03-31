@@ -25,6 +25,7 @@ const (
 	menuNone   = ""
 	menuSort   = "sort"
 	menuFilter = "filter"
+	menuExit   = "exit"
 
 	historySortDate  = "date"
 	historySortTotal = "total"
@@ -71,6 +72,9 @@ type Model struct {
 
 	activeMenu string
 	menuIndex  int
+	menuReturn string
+
+	restartRequested bool
 
 	draggingScrollbar  bool
 	scrollbarDragDelta int
@@ -108,18 +112,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
 		}
 
 		if m.activeMenu != menuNone {
 			m.handleMenuKey(msg.String())
+			if m.quitting {
+				return m, tea.Quit
+			}
 			m.clampScroll()
 			return m, nil
 		}
 
 		switch msg.String() {
+		case "q", "Q":
+			m.openExitMenu()
 		case "tab":
 			if m.mode == modeRealtime {
 				m.mode = modeHistory
@@ -186,9 +195,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) handleMenuKey(key string) {
 	switch key {
 	case "esc":
+		if m.activeMenu == menuExit && m.menuReturn != menuNone {
+			m.activeMenu = m.menuReturn
+			m.menuReturn = menuNone
+			return
+		}
 		m.activeMenu = menuNone
+		m.menuReturn = menuNone
 	case "tab":
 		m.activeMenu = menuNone
+		m.menuReturn = menuNone
 		if m.mode == modeRealtime {
 			m.mode = modeHistory
 			m.err = m.historyErr
@@ -205,19 +221,38 @@ func (m *Model) handleMenuKey(key string) {
 		}
 	case "enter":
 		m.applyMenuSelection()
+	case "q", "Q":
+		if m.activeMenu == menuExit {
+			return
+		}
+		m.openExitMenu()
 	case "s", "S":
+		if m.activeMenu == menuExit {
+			return
+		}
 		if m.activeMenu == menuSort {
 			m.activeMenu = menuNone
 		} else if m.mode == modeRealtime {
 			m.openSortMenu()
 		}
 	case "f", "F":
+		if m.activeMenu == menuExit {
+			return
+		}
 		if m.activeMenu == menuFilter {
 			m.activeMenu = menuNone
 		} else if m.mode == modeRealtime {
 			m.openFilterMenu()
 		}
 	}
+}
+
+func (m *Model) openExitMenu() {
+	if m.activeMenu != menuExit {
+		m.menuReturn = m.activeMenu
+	}
+	m.activeMenu = menuExit
+	m.menuIndex = 0
 }
 
 func (m *Model) openSortMenu() {
@@ -242,8 +277,17 @@ func (m *Model) applyMenuSelection() {
 	case menuFilter:
 		m.filterCategory = filterMenuItems[m.menuIndex].key
 		m.scrollOffset = 0
+	case menuExit:
+		if m.menuIndex == 0 {
+			m.quitting = true
+		} else {
+			m.restartRequested = true
+			m.quitting = true
+		}
 	}
-	m.activeMenu = menuNone
+	if !m.quitting {
+		m.activeMenu = menuNone
+	}
 }
 
 func (m Model) currentSortMenuIndex() int {
@@ -270,9 +314,15 @@ func (m Model) currentMenuLength() int {
 		return len(sortMenuItems)
 	case menuFilter:
 		return len(filterMenuItems)
+	case menuExit:
+		return 2
 	default:
 		return 0
 	}
+}
+
+func (m Model) RestartRequested() bool {
+	return m.restartRequested
 }
 
 // tickCmd schedules the next UI refresh.
