@@ -1,0 +1,76 @@
+name: Release Windows Package
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust_core
+
+      - name: Build project
+        shell: pwsh
+        run: .\scripts\build.ps1
+
+      - name: Prepare release package
+        shell: pwsh
+        run: |
+          $packageRoot = Join-Path $env:RUNNER_TEMP "netFlow_tool-windows-x64"
+          if (Test-Path $packageRoot) {
+            Remove-Item $packageRoot -Recurse -Force
+          }
+
+          New-Item -ItemType Directory -Path $packageRoot | Out-Null
+          Copy-Item .\build\* $packageRoot -Force
+          Copy-Item .\scripts\run.ps1 $packageRoot -Force
+          Copy-Item .\README.md $packageRoot -Force
+          Copy-Item .\LICENSE $packageRoot -Force
+
+          $tagName = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "manual" }
+          $zipName = "netFlow_tool-windows-x64-$tagName.zip"
+          $zipPath = Join-Path $env:RUNNER_TEMP $zipName
+
+          if (Test-Path $zipPath) {
+            Remove-Item $zipPath -Force
+          }
+
+          Compress-Archive -Path "$packageRoot\*" -DestinationPath $zipPath
+          "PACKAGE_ZIP=$zipPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PACKAGE_NAME=$zipName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Upload packaged artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: netFlow_tool-windows-release
+          path: ${{ env.PACKAGE_ZIP }}
+          if-no-files-found: error
+
+      - name: Create or update GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.PACKAGE_ZIP }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true

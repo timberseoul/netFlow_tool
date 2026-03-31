@@ -1,11 +1,9 @@
 # netFlow_tool
 
-`netFlow_tool` 是一个面向 Windows 的终端网络流量监控工具，采用 **Rust 核心 + Go TUI** 双进程架构：
+`netFlow_tool` 是一个 Windows 的终端网络流量监控工具，采用 **Rust 核心 + Go TUI** ：
 
 - **Rust core** 负责 WinDivert 抓包、协议解析、PID 映射、流量聚合与 IPC 服务
 - **Go UI** 负责拉起核心进程、轮询统计快照，并在终端中实时展示进程级上传/下载信息
-
-项目通过 Windows 命名管道 `\\.\pipe\netFlow_tool_ipc` 以**单行 JSON**进行通信。
 
 ## 功能概览
 
@@ -94,29 +92,37 @@ go build -o ..\build\netFlow_tool-ui.exe .
 - `WinDivert.dll`
 - `WinDivert64.sys`
 
-通常最终用户只需要解压 Actions 产物并运行 `netFlow_tool-ui.exe` 或 `run.ps1` 即可。
+仓库已提供两条 GitHub Actions 工作流：
 
-## GitHub Actions 自动构建
+- `.github/workflows/build-windows.yml`
+- `.github/workflows/release-windows.yml`
 
-仓库已提供 GitHub Actions 工作流：`.github/workflows/build-windows.yml`
+其中：
 
-触发方式：
+- `build-windows.yml` 用于日常 CI 构建并上传 Actions artifact
+- `release-windows.yml` 用于推送 tag 后自动发布 GitHub Release
 
-- push 到 `main`
-- Pull Request
-- 手动触发 `workflow_dispatch`
+## GitHub Release 自动发布
 
-工作流会在 `windows-latest` 上自动：
+当你推送符合 `v*` 规则的 tag 时，例如：
 
-1. 安装 Rust 与 Go
-2. 执行 `.\scripts\build.ps1`
-3. 打包 `build\` 目录内容
-4. 附带 `run.ps1`、`README.md`、`LICENSE`
-5. 上传可下载的 Windows 最终产物压缩包
+```powershell
+git tag v0.1.0
+git push origin v0.1.0
+```
 
-生成的 artifact 名称为：
+GitHub Actions 会自动：
 
-- `netFlow_tool-windows-x64`
+1. 在 Windows 环境构建项目
+2. 打包最终可分发文件
+3. 自动创建或更新同名 GitHub Release
+4. 将 zip 直接上传到 Release 页面
+
+Release 资产文件名格式为：
+
+- `netFlow_tool-windows-x64-v0.1.0.zip`
+
+如果只是普通提交、PR 或手动触发构建，则仍然主要通过 Actions artifact 获取构建产物。
 
 ## 运行机制
 
