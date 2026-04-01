@@ -7,6 +7,15 @@ type DailyUsage struct {
 	Download uint64 `json:"download"`
 }
 
+// ThroughputPoint represents an averaged throughput point for chart rendering.
+type ThroughputPoint struct {
+	Label         string  `json:"label"`
+	Timestamp     string  `json:"timestamp"`
+	UploadSpeed   float64 `json:"upload_speed"`
+	DownloadSpeed float64 `json:"download_speed"`
+	SampleCount   int     `json:"sample_count"`
+}
+
 // ProcessFlow represents per-process network statistics from the Rust core.
 type ProcessFlow struct {
 	PID           uint32  `json:"pid"`

@@ -125,8 +125,26 @@ if ($LASTEXITCODE -ne 0) {
 Pop-Location
 Write-Host "Rust core built successfully." -ForegroundColor Green
 
+# Build Web UI frontend
+Write-Host "`n[2/3] Building Web UI frontend..." -ForegroundColor Yellow
+Push-Location "$PSScriptRoot\..\go-ui\web\webui"
+npm ci
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Web UI dependency install failed!" -ForegroundColor Red
+    Pop-Location
+    exit 1
+}
+npm run build
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Web UI build failed!" -ForegroundColor Red
+    Pop-Location
+    exit 1
+}
+Pop-Location
+Write-Host "Web UI built successfully." -ForegroundColor Green
+
 # Build Go TUI
-Write-Host "`n[2/2] Building Go TUI..." -ForegroundColor Yellow
+Write-Host "`n[3/3] Building Go TUI..." -ForegroundColor Yellow
 Push-Location "$PSScriptRoot\..\go-ui"
 go mod tidy
 go build -ldflags="-s -w" -o "..\build\netFlow_tool-ui.exe" .

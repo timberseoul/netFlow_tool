@@ -16,6 +16,7 @@ import (
 	"netFlow_tool-ui/ipc"
 	"netFlow_tool-ui/service"
 	"netFlow_tool-ui/ui"
+	"netFlow_tool-ui/web"
 )
 
 type adminPromptModel struct {
@@ -190,6 +191,15 @@ func main() {
 	statsSvc := service.NewStatsService(client, 1*time.Second)
 	statsSvc.Start()
 	defer statsSvc.Stop()
+
+	webServer, webURL, err := web.Start(statsSvc)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Web UI start failed: %v\n", err)
+	} else {
+		defer webServer.Stop()
+		fmt.Printf("Web UI: %s\n", webURL)
+		_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", webURL).Start()
+	}
 
 	model := ui.NewModel(statsSvc)
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())

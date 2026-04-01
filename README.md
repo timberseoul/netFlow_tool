@@ -13,6 +13,7 @@
 - 展示累计上传 / 下载流量
 - 按 `User / System / Service` 分类查看进程
 - 提供历史流量统计页面
+- 提供本地 WebUI 实时监测面板
 - 提供终端内排序、筛选、退出 / 重启菜单
 - IPC 轮询与 UI 刷新解耦，避免界面因 IPC 阻塞而卡顿
 
@@ -67,6 +68,30 @@ netFlow_tool/
 ```
 
 首次真正抓包时，需要以管理员权限运行。
+
+启动后，Go 进程会额外拉起一个本地 Web UI 服务，并随机监听一个高位端口，例如：
+
+```text
+Web UI: http://127.0.0.1:52341
+```
+
+程序会尝试自动打开浏览器。即使浏览器没有自动弹出，也可以手动访问终端中输出的地址。
+
+## WebUI 架构
+
+WebUI 采用前后端分离：
+
+- **后端**：Go 本地 HTTP server
+  - 提供 `/api/bootstrap` 初始化接口
+  - 提供 `/ws` WebSocket 实时推送接口
+- **前端**：使用 Vite 构建的独立 React 工程
+  - 使用 React 渲染
+  - 使用 Tailwind CSS 做样式
+  - 使用本地 shadcn 风格组件组织界面
+  - 使用 TanStack Table 渲染表格
+  - 使用 Recharts 绘制实时图表
+
+前端源码位于 `go-ui/web/webui/`，构建产物输出到 `go-ui/web/webui/dist/`，随后由 Go 程序直接嵌入并服务。
 
 ## 手动构建
 

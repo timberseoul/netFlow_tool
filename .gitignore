@@ -33,6 +33,10 @@ rust_core/target/
 go-ui/bin/
 go-ui/coverage.out
 
+# Web UI frontend
+go-ui/web/webui/node_modules/
+go-ui/web/webui/dist/
+
 # Windows binaries and debug symbols
 *.exe
 *.pdb

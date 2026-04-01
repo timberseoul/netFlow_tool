@@ -8,6 +8,14 @@ import (
 	"time"
 )
 
+const throughputRetention = 30 * time.Minute
+
+type throughputSample struct {
+	timestamp     time.Time
+	uploadSpeed   float64
+	downloadSpeed float64
+}
+
 // StatsService runs an independent goroutine that polls the Rust core
 // at a fixed interval using time.Ticker (true wall-clock cadence, no drift).
 // The UI reads cached results via Snapshot() — zero coupling between
@@ -17,6 +25,7 @@ type StatsService struct {
 	mu         sync.RWMutex
 	stats      []types.ProcessFlow
 	history    []types.DailyUsage
+	throughput []throughputSample
 	lastErr    error
 	historyErr error
 	interval   time.Duration
@@ -67,7 +76,9 @@ func (s *StatsService) poll() {
 		s.lastErr = err
 		// Keep stale stats so the UI still shows the last good data.
 	} else {
+		now := time.Now()
 		s.stats = stats
+		s.recordThroughputSampleLocked(now, stats)
 		s.lastErr = nil
 	}
 	s.mu.Unlock()
@@ -106,7 +117,92 @@ func (s *StatsService) SnapshotHistory() ([]types.DailyUsage, error) {
 	return result, s.historyErr
 }
 
+// SnapshotThroughput returns averaged throughput points derived from cached samples.
+func (s *StatsService) SnapshotThroughput(window time.Duration, maxPoints int) []types.ThroughputPoint {
+	s.mu.RLock()
+	samples := make([]throughputSample, len(s.throughput))
+	copy(samples, s.throughput)
+	s.mu.RUnlock()
+
+	return aggregateThroughputSamples(samples, window, maxPoints)
+}
+
 // Stop stops the polling goroutine.
 func (s *StatsService) Stop() {
 	close(s.stopCh)
+}
+
+func (s *StatsService) recordThroughputSampleLocked(now time.Time, stats []types.ProcessFlow) {
+	uploadSpeed, downloadSpeed := sumThroughput(stats)
+	s.throughput = append(s.throughput, throughputSample{
+		timestamp:     now,
+		uploadSpeed:   uploadSpeed,
+		downloadSpeed: downloadSpeed,
+	})
+
+	cutoff := now.Add(-throughputRetention)
+	trimIndex := 0
+	for trimIndex < len(s.throughput) && s.throughput[trimIndex].timestamp.Before(cutoff) {
+		trimIndex++
+	}
+	if trimIndex > 0 {
+		s.throughput = append([]throughputSample(nil), s.throughput[trimIndex:]...)
+	}
+}
+
+func sumThroughput(stats []types.ProcessFlow) (float64, float64) {
+	var uploadSpeed float64
+	var downloadSpeed float64
+	for _, flow := range stats {
+		uploadSpeed += flow.UploadSpeed
+		downloadSpeed += flow.DownloadSpeed
+	}
+	return uploadSpeed, downloadSpeed
+}
+
+func aggregateThroughputSamples(samples []throughputSample, window time.Duration, maxPoints int) []types.ThroughputPoint {
+	if len(samples) == 0 || window <= 0 || maxPoints <= 0 {
+		return nil
+	}
+
+	type bucket struct {
+		start       time.Time
+		uploadSum   float64
+		downloadSum float64
+		sampleCount int
+	}
+
+	buckets := make([]bucket, 0, len(samples))
+	for _, sample := range samples {
+		start := sample.timestamp.Truncate(window)
+		if len(buckets) == 0 || !buckets[len(buckets)-1].start.Equal(start) {
+			buckets = append(buckets, bucket{start: start})
+		}
+
+		current := &buckets[len(buckets)-1]
+		current.uploadSum += sample.uploadSpeed
+		current.downloadSum += sample.downloadSpeed
+		current.sampleCount++
+	}
+
+	if len(buckets) > maxPoints {
+		buckets = buckets[len(buckets)-maxPoints:]
+	}
+
+	points := make([]types.ThroughputPoint, 0, len(buckets))
+	for _, bucket := range buckets {
+		if bucket.sampleCount == 0 {
+			continue
+		}
+
+		points = append(points, types.ThroughputPoint{
+			Label:         bucket.start.Format("15:04"),
+			Timestamp:     bucket.start.Format(time.RFC3339),
+			UploadSpeed:   bucket.uploadSum / float64(bucket.sampleCount),
+			DownloadSpeed: bucket.downloadSum / float64(bucket.sampleCount),
+			SampleCount:   bucket.sampleCount,
+		})
+	}
+
+	return points
 }
