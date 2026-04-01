@@ -205,7 +205,7 @@ func (m Model) renderRealtimeView() string {
 
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render(renderRealtimeHelp(m.activeMenu)) + "\n")
-	b.WriteString(rowStyle.Render(fmt.Sprintf("  Speed: ↑ %s  ↓ %s  |  Traffic: ↑ %s  ↓ %s  |  %d processes", formatSpeed(totalUp), formatSpeed(totalDown), formatBytes(totalUpBytes), formatBytes(totalDownBytes), count)) + "\n")
+	b.WriteString(rowStyle.Render(fmt.Sprintf("  Speed: ↑ %s  ↓ %s  |  Traffic: ↑ %s  ↓ %s  |  %d processes  |  WebUI Port: %s", formatSpeed(totalUp), formatSpeed(totalDown), formatBytes(totalUpBytes), formatBytes(totalDownBytes), count, m.webPort)) + "\n")
 
 	return m.applyMenuOverlay(b.String())
 }
@@ -258,7 +258,7 @@ func (m Model) renderHistoryView() string {
 
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render(fmt.Sprintf("  [T] Total desc  [D] Date desc  [Tab] Realtime  [Q] Exit menu  |  Current: %s", currentHistorySortLabel(m.historySortBy))) + "\n")
-	b.WriteString(rowStyle.Render(fmt.Sprintf("  Days: %d  |  Total Upload: %s  |  Total Download: %s", len(rows), formatBytes(totalUpload), formatBytes(totalDownload))) + "\n")
+	b.WriteString(rowStyle.Render(fmt.Sprintf("  Days: %d  |  Total Upload: %s  |  Total Download: %s  |  WebUI Port: %s", len(rows), formatBytes(totalUpload), formatBytes(totalDownload), m.webPort)) + "\n")
 
 	return m.applyMenuOverlay(b.String())
 }

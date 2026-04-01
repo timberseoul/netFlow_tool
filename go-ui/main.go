@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -193,15 +194,17 @@ func main() {
 	defer statsSvc.Stop()
 
 	webServer, webURL, err := web.Start(statsSvc)
+	webPort := ""
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Web UI start failed: %v\n", err)
 	} else {
 		defer webServer.Stop()
 		fmt.Printf("Web UI: %s\n", webURL)
+		webPort = portFromURL(webURL)
 		_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", webURL).Start()
 	}
 
-	model := ui.NewModel(statsSvc)
+	model := ui.NewModel(statsSvc, webPort)
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
 	finalModel, err := p.Run()
@@ -217,4 +220,12 @@ func main() {
 			os.Exit(1)
 		}
 	}
+}
+
+func portFromURL(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	return parsed.Port()
 }

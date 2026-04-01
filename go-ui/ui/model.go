@@ -55,6 +55,7 @@ var filterMenuItems = []struct {
 // Model is the bubbletea model for the TUI.
 type Model struct {
 	statsSvc       *service.StatsService
+	webPort        string
 	flows          []types.ProcessFlow
 	history        []types.DailyUsage
 	err            error
@@ -81,12 +82,16 @@ type Model struct {
 }
 
 // NewModel creates a new TUI model backed by a StatsService.
-func NewModel(statsSvc *service.StatsService) Model {
+func NewModel(statsSvc *service.StatsService, webPort string) Model {
 	// Read initial data so the first frame has content.
 	flows, lastErr := statsSvc.Snapshot()
 	history, historyErr := statsSvc.SnapshotHistory()
+	if webPort == "" {
+		webPort = "N/A"
+	}
 	return Model{
 		statsSvc:       statsSvc,
+		webPort:        webPort,
 		flows:          flows,
 		history:        history,
 		err:            lastErr,

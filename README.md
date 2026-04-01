@@ -1,21 +1,49 @@
 # netFlow_tool
 
-`netFlow_tool` 是一个 Windows 的终端网络流量监控工具，采用 **Rust 核心 + Go TUI** ：
+`netFlow_tool` 是一个 （~~青春版netlimiter~~） Windows 的终端网络流量监控工具，采用Rust和Go编写 ：
 
-- **Rust core** 负责 WinDivert 抓包、协议解析、PID 映射、流量聚合与 IPC 服务
-- **Go UI** 负责拉起核心进程、轮询统计快照，并在终端中实时展示进程级上传/下载信息
+- **Rust core** WinDivert 抓包、协议解析、PID 映射、流量聚合与 IPC 传输
+- **Go UI** 拉起核心进程、轮询统计快照，终端实时展示进程上传/下载信息
+
+## TUI
 
 ![工具预览图](./assets/demo.png)
+
+## Web-ui
+
+![工具预览图2](./assets/web-ui_demo.png)
 
 ## 功能概览
 
 - 按进程展示实时上传 / 下载速率
 - 展示累计上传 / 下载流量
-- 按 `User / System / Service` 分类查看进程
+- 可以按 `User / System / Service` 分类查看进程
 - 提供历史流量统计页面
 - 提供本地 WebUI 实时监测面板
 - 提供终端内排序、筛选、退出 / 重启菜单
-- IPC 轮询与 UI 刷新解耦，避免界面因 IPC 阻塞而卡顿
+
+## 使用说明
+
+### 实时页面
+
+- `S`：打开排序菜单
+- `F`：打开筛选菜单
+- `Tab`：切换到历史页面
+- 鼠标滚轮：上下滚动
+- 拖动右侧滚动条：滚动列表
+
+### 历史页面
+
+- `T`：按总流量降序排序
+- `D`：按日期降序排序
+- `Tab`：切回实时页面
+
+### 退出菜单
+
+- `Q`：呼出退出菜单
+- `Up / Down`：选择 `Quit` 或 `Restart`
+- `Enter`：确认执行
+- `Esc`：返回上一层
 
 ## 项目结构
 
@@ -30,7 +58,7 @@ netFlow_tool/
 └─ .github/workflows/        # GitHub Actions 工作流
 ```
 
-## 运行要求
+## 运行环境
 
 - Windows 10/11
 - 管理员权限运行
@@ -119,15 +147,7 @@ go build -o ..\build\netFlow_tool-ui.exe .
 - `WinDivert.dll`
 - `WinDivert64.sys`
 
-仓库已提供两条 GitHub Actions 工作流：
-
-- `.github/workflows/build-windows.yml`
-- `.github/workflows/release-windows.yml`
-
-其中：
-
-- `build-windows.yml` 用于日常 CI 构建并上传 Actions artifact
-- `release-windows.yml` 用于推送 tag 后自动发布 GitHub Release
+> 双击`netFlow_tool-ui.exe`即可运行并自动拉取`netFlow_tool-core.exe`
 
 ## 运行机制
 
@@ -170,29 +190,6 @@ cd go-ui
 gofmt -w .
 go test ./...
 ```
-
-## 使用说明
-
-### 实时页面
-
-- `S`：打开排序菜单
-- `F`：打开筛选菜单
-- `Tab`：切换到历史页面
-- 鼠标滚轮：上下滚动
-- 拖动右侧滚动条：滚动列表
-
-### 历史页面
-
-- `T`：按总流量降序排序
-- `D`：按日期降序排序
-- `Tab`：切回实时页面
-
-### 退出菜单
-
-- `Q`：呼出退出菜单
-- `Up / Down`：选择 `Quit` 或 `Restart`
-- `Enter`：确认执行
-- `Esc`：返回上一层
 
 ## 故障排查
 
