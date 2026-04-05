@@ -32,6 +32,7 @@ const websocketMagic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 const (
 	throughputChartWindow   = 2 * time.Minute
 	throughputChartMaxPoint = 15
+	webTreeAverageWindow    = 2 * time.Minute
 )
 
 type Server struct {
@@ -136,10 +137,14 @@ func (s *Server) Stop() error {
 }
 
 func (s *Server) handleBootstrap(w http.ResponseWriter, _ *http.Request) {
-	flows, err := s.statsSvc.Snapshot()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
+	flows := s.statsSvc.SnapshotAveragedFlows(webTreeAverageWindow)
+	if len(flows) == 0 {
+		var err error
+		flows, err = s.statsSvc.Snapshot()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
 	}
 
 	history, historyErr := s.statsSvc.SnapshotHistory()
@@ -199,9 +204,13 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	defer ticker.Stop()
 
 	for {
-		flows, err := s.statsSvc.Snapshot()
-		if err != nil {
-			return
+		flows := s.statsSvc.SnapshotAveragedFlows(webTreeAverageWindow)
+		if len(flows) == 0 {
+			var err error
+			flows, err = s.statsSvc.Snapshot()
+			if err != nil {
+				return
+			}
 		}
 
 		if err := conn.SetWriteDeadline(time.Now().Add(3 * time.Second)); err != nil {

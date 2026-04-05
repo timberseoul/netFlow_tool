@@ -19,6 +19,7 @@ type ThroughputPoint struct {
 // ProcessFlow represents per-process network statistics from the Rust core.
 type ProcessFlow struct {
 	PID           uint32  `json:"pid"`
+	ParentPID     *uint32 `json:"parent_pid,omitempty"`
 	Name          string  `json:"name"`
 	Category      string  `json:"category"`
 	Status        string  `json:"status"` // "active" or "inactive"

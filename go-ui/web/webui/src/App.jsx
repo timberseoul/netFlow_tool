@@ -1,10 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import {
-  flexRender,
-  getCoreRowModel,
-  getSortedRowModel,
-  useReactTable,
-} from "@tanstack/react-table";
+import { flexRender, getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import {
   Bar,
   BarChart,
@@ -47,6 +42,131 @@ function formatSpeed(bytesPerSec) {
   return `${bytesPerSec.toFixed(0)} B/s`;
 }
 
+function comparePrimitive(left, right) {
+  if (typeof left === "string" || typeof right === "string") {
+    return String(left ?? "").localeCompare(String(right ?? ""));
+  }
+  return Number(left ?? 0) - Number(right ?? 0);
+}
+
+function buildTreeRows(flows, expandedParents, sorting) {
+  const nodes = new Map();
+  const orderedNodes = flows.map((flow) => {
+    const node = { flow, children: [] };
+    nodes.set(flow.pid, node);
+    return node;
+  });
+
+  const roots = [];
+  for (const node of orderedNodes) {
+    const parentPid = node.flow.parent_pid;
+    if (parentPid && nodes.has(parentPid) && parentPid !== node.flow.pid) {
+      nodes.get(parentPid).children.push(node);
+      continue;
+    }
+    roots.push(node);
+  }
+
+  function aggregateNode(node) {
+    let uploadSpeed = node.flow.upload_speed;
+    let downloadSpeed = node.flow.download_speed;
+    let totalUpload = node.flow.total_upload;
+    let totalDownload = node.flow.total_download;
+
+    for (const child of node.children) {
+      const childAggregate = aggregateNode(child);
+      uploadSpeed += childAggregate.uploadSpeed;
+      downloadSpeed += childAggregate.downloadSpeed;
+      totalUpload += childAggregate.totalUpload;
+      totalDownload += childAggregate.totalDownload;
+    }
+
+    return { uploadSpeed, downloadSpeed, totalUpload, totalDownload };
+  }
+
+  function compareNodes(left, right) {
+    const [activeSort] = sorting;
+    const sortId = activeSort?.id ?? "aggregate_download_speed";
+    const desc = activeSort?.desc ?? true;
+    const leftAggregate = aggregateNode(left);
+    const rightAggregate = aggregateNode(right);
+    let comparison = 0;
+
+    switch (sortId) {
+      case "name":
+        comparison = comparePrimitive(left.flow.name, right.flow.name);
+        break;
+      case "upload_speed":
+      case "aggregate_upload_speed":
+        comparison = comparePrimitive(leftAggregate.uploadSpeed, rightAggregate.uploadSpeed);
+        break;
+      case "download_speed":
+      case "aggregate_download_speed":
+        comparison = comparePrimitive(leftAggregate.downloadSpeed, rightAggregate.downloadSpeed);
+        break;
+      case "total_upload":
+      case "aggregate_total_upload":
+        comparison = comparePrimitive(leftAggregate.totalUpload, rightAggregate.totalUpload);
+        break;
+      case "total_download":
+      case "aggregate_total_download":
+        comparison = comparePrimitive(leftAggregate.totalDownload, rightAggregate.totalDownload);
+        break;
+      case "pid":
+        comparison = comparePrimitive(left.flow.pid, right.flow.pid);
+        break;
+      default:
+        comparison = comparePrimitive(leftAggregate.downloadSpeed, rightAggregate.downloadSpeed);
+        break;
+    }
+
+    if (comparison === 0) {
+      comparison = comparePrimitive(left.flow.pid, right.flow.pid);
+    }
+
+    return desc ? -comparison : comparison;
+  }
+
+  function sortNodes(nodesToSort) {
+    nodesToSort.sort(compareNodes);
+    for (const node of nodesToSort) {
+      if (node.children.length > 0) {
+        sortNodes(node.children);
+      }
+    }
+  }
+
+  sortNodes(roots);
+
+  const rows = [];
+  function appendNode(node, depth) {
+    const hasChildren = node.children.length > 0;
+    const expanded = hasChildren && Boolean(expandedParents[node.flow.pid]);
+    const aggregate = aggregateNode(node);
+    rows.push({
+      ...node.flow,
+      depth,
+      hasChildren,
+      expanded,
+      aggregate_upload_speed: aggregate.uploadSpeed,
+      aggregate_download_speed: aggregate.downloadSpeed,
+      aggregate_total_upload: aggregate.totalUpload,
+      aggregate_total_download: aggregate.totalDownload,
+    });
+
+    if (!expanded) return;
+    for (const child of node.children) {
+      appendNode(child, depth + 1);
+    }
+  }
+
+  for (const root of roots) {
+    appendNode(root, 0);
+  }
+
+  return rows;
+}
+
 function StatCard({ label, value, accent }) {
   return (
     <Card>
@@ -63,8 +183,39 @@ export default function App() {
   const [history, setHistory] = useState([]);
   const [status, setStatus] = useState("connecting");
   const [filterCategory, setFilterCategory] = useState("");
-  const [sorting, setSorting] = useState([{ id: "download_speed", desc: true }]);
+  const [sorting, setSorting] = useState([{ id: "aggregate_download_speed", desc: true }]);
   const [chartPoints, setChartPoints] = useState([]);
+  const [expandedParents, setExpandedParents] = useState({});
+
+  function toggleColumnSort(field) {
+    setSorting((current) => {
+      if ((current[0]?.id ?? "aggregate_download_speed") === field) {
+        return [{ id: field, desc: !(current[0]?.desc ?? true) }];
+      }
+      return [{ id: field, desc: true }];
+    });
+  }
+
+  function sortIndicator(field) {
+    if (sorting[0]?.id !== field) return "↕";
+    return sorting[0]?.desc ? "↓" : "↑";
+  }
+
+  function renderSortableHeader(label, field) {
+    const active = sorting[0]?.id === field;
+    return (
+      <button
+        type="button"
+        className={`inline-flex items-center gap-1 rounded-md px-2 py-1 transition ${
+          active ? "bg-zinc-800 text-zinc-50" : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100"
+        }`}
+        onClick={() => toggleColumnSort(field)}
+      >
+        <span>{label}</span>
+        <span className={active ? "text-sky-300" : "text-zinc-500"}>{sortIndicator(field)}</span>
+      </button>
+    );
+  }
 
   useEffect(() => {
     let mounted = true;
@@ -162,6 +313,11 @@ export default function App() {
     [flows, filterCategory],
   );
 
+  const treeRows = useMemo(
+    () => buildTreeRows(visibleFlows, expandedParents, sorting),
+    [expandedParents, sorting, visibleFlows],
+  );
+
   const totals = useMemo(
     () =>
       visibleFlows.reduce(
@@ -207,8 +363,36 @@ export default function App() {
       { accessorKey: "pid", header: "PID" },
       {
         accessorKey: "name",
-        header: "Process",
-        cell: ({ getValue }) => <span className="font-medium text-zinc-100">{getValue()}</span>,
+        header: () => renderSortableHeader("Process", "name"),
+        cell: ({ row }) => {
+          const item = row.original;
+          const indent = { paddingLeft: `${item.depth * 1.25}rem` };
+          const arrow = item.hasChildren ? (item.expanded ? "▼" : "▶") : item.depth > 0 ? "└─" : "•";
+          const isChild = item.depth > 0;
+          const textClass = isChild ? "text-sky-200" : "text-zinc-100";
+
+          return (
+            <div className={`flex items-center gap-2 ${textClass}`} style={indent}>
+              {item.hasChildren ? (
+                <button
+                  type="button"
+                  className="w-5 text-left text-zinc-400 transition hover:text-zinc-100"
+                  onClick={() =>
+                    setExpandedParents((current) => ({
+                      ...current,
+                      [item.pid]: !current[item.pid],
+                    }))
+                  }
+                >
+                  {arrow}
+                </button>
+              ) : (
+                <span className="w-5 text-sky-400/70">{arrow}</span>
+              )}
+              <span className={item.hasChildren ? "font-semibold" : "font-medium"}>{item.name}</span>
+            </div>
+          );
+        },
       },
       {
         accessorKey: "category",
@@ -225,64 +409,65 @@ export default function App() {
         ),
       },
       {
-        accessorKey: "upload_speed",
-        header: "Upload",
+        accessorKey: "aggregate_upload_speed",
+        header: () => renderSortableHeader("Upload", "aggregate_upload_speed"),
         cell: ({ getValue }) => formatSpeed(getValue()),
       },
       {
-        accessorKey: "download_speed",
-        header: "Download",
+        accessorKey: "aggregate_download_speed",
+        header: () => renderSortableHeader("Download", "aggregate_download_speed"),
         cell: ({ getValue }) => formatSpeed(getValue()),
       },
       {
-        accessorKey: "total_upload",
+        accessorKey: "aggregate_total_upload",
         header: "Total Up",
         cell: ({ getValue }) => formatBytes(getValue()),
       },
       {
-        accessorKey: "total_download",
+        accessorKey: "aggregate_total_download",
         header: "Total Down",
         cell: ({ getValue }) => formatBytes(getValue()),
       },
     ],
-    [],
+    [sorting],
   );
 
   const table = useReactTable({
-    data: visibleFlows,
+    data: treeRows,
     columns,
     state: { sorting },
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
   });
 
   return (
     <div className="min-h-screen bg-zinc-950 px-6 py-6 text-zinc-50">
       <div className="mx-auto flex max-w-7xl flex-col gap-6">
         <Card className="shadow-xl">
-          <CardContent className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <h1 className="text-3xl font-bold tracking-tight text-zinc-50">netFlow_tool WebUI</h1>
-              <p className="mt-1 text-sm text-zinc-400">
-                基于 Go 本地 HTTP + WebSocket 的前后端分离监测面板。
-              </p>
-            </div>
-            <div className="flex items-center gap-3">
-              <Badge className={status === "connected" ? "bg-emerald-900/60 text-emerald-300" : "bg-amber-900/60 text-amber-300"}>
-                WebSocket: {status}
-              </Badge>
-              <Tabs>
-                {["", "user", "system", "service"].map((filter) => (
-                  <TabsButton
-                    key={filter || "all"}
-                    active={filterCategory === filter}
-                    onClick={() => setFilterCategory(filter)}
-                  >
-                    {categoryLabels[filter]}
-                  </TabsButton>
-                ))}
-              </Tabs>
+          <CardContent className="flex flex-col gap-4">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h1 className="text-3xl font-bold tracking-tight text-zinc-50">netFlow_tool WebUI</h1>
+                <p className="mt-1 text-sm text-zinc-400">
+                  基于 Go 本地 HTTP + WebSocket 的前后端分离监测面板。
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <Badge className={status === "connected" ? "bg-emerald-900/60 text-emerald-300" : "bg-amber-900/60 text-amber-300"}>
+                  WebSocket: {status}
+                </Badge>
+                <Tabs>
+                  {["", "user", "system", "service"].map((filter) => (
+                    <TabsButton
+                      key={filter || "all"}
+                      active={filterCategory === filter}
+                      onClick={() => setFilterCategory(filter)}
+                    >
+                      {categoryLabels[filter]}
+                    </TabsButton>
+                  ))}
+                </Tabs>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -305,13 +490,13 @@ export default function App() {
                   <CartesianGrid stroke="#27272a" strokeDasharray="3 3" />
                   <XAxis dataKey="time" stroke="#a1a1aa" minTickGap={24} />
                   <YAxis stroke="#a1a1aa" tickFormatter={(value) => formatSpeed(value)} />
-                    <Tooltip
-                      contentStyle={{ backgroundColor: "#111114", border: "1px solid #27272a", borderRadius: "12px" }}
-                      formatter={(value, name, item) => [
-                        formatSpeed(value),
-                        item?.payload?.sampleCount ? `${name} (${item.payload.sampleCount} samples avg)` : name,
-                      ]}
-                    />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: "#111114", border: "1px solid #27272a", borderRadius: "12px" }}
+                    formatter={(value, name, item) => [
+                      formatSpeed(value),
+                      item?.payload?.sampleCount ? `${name} (${item.payload.sampleCount} samples avg)` : name,
+                    ]}
+                  />
                   <Legend />
                   <Line type="monotone" dataKey="upload" stroke="#fda4af" strokeWidth={2} dot={false} name="Upload" />
                   <Line type="monotone" dataKey="download" stroke="#86efac" strokeWidth={2} dot={false} name="Download" />
@@ -346,7 +531,8 @@ export default function App() {
         <div className="grid gap-6 xl:grid-cols-[1.5fr_1fr]">
           <Card>
             <CardHeader>
-              <CardTitle>Process Flows</CardTitle>
+              <CardTitle>Process Flows Tree</CardTitle>
+              <p className="text-sm text-zinc-400">基于最近 2 分钟缓存样本平均值渲染，与吞吐量曲线保持一致。</p>
             </CardHeader>
             <CardContent className="overflow-x-auto">
               <table className="min-w-full text-sm">
@@ -354,11 +540,7 @@ export default function App() {
                   {table.getHeaderGroups().map((headerGroup) => (
                     <tr key={headerGroup.id}>
                       {headerGroup.headers.map((header) => (
-                        <th
-                          key={header.id}
-                          className="cursor-pointer px-3 py-3 text-left font-medium"
-                          onClick={header.column.getToggleSortingHandler()}
-                        >
+                        <th key={header.id} className="px-3 py-3 text-left font-medium">
                           {flexRender(header.column.columnDef.header, header.getContext())}
                         </th>
                       ))}
@@ -367,7 +549,16 @@ export default function App() {
                 </thead>
                 <tbody>
                   {table.getRowModel().rows.map((row) => (
-                    <tr key={row.id} className="border-b border-zinc-800/80 text-zinc-200 hover:bg-zinc-900/50">
+                    <tr
+                      key={row.id}
+                      className={`border-b border-zinc-800/80 text-zinc-200 hover:bg-zinc-900/50 ${
+                        row.original.hasChildren
+                          ? "bg-zinc-900/50 shadow-inner"
+                          : row.original.depth > 0
+                            ? "bg-sky-950/25"
+                            : ""
+                      }`}
+                    >
                       {row.getVisibleCells().map((cell) => (
                         <td key={cell.id} className="px-3 py-3">
                           {flexRender(cell.column.columnDef.cell, cell.getContext())}

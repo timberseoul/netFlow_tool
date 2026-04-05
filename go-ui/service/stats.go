@@ -16,6 +16,11 @@ type throughputSample struct {
 	downloadSpeed float64
 }
 
+type flowSnapshotSample struct {
+	timestamp time.Time
+	stats     []types.ProcessFlow
+}
+
 // StatsService runs an independent goroutine that polls the Rust core
 // at a fixed interval using time.Ticker (true wall-clock cadence, no drift).
 // The UI reads cached results via Snapshot() — zero coupling between
@@ -26,6 +31,7 @@ type StatsService struct {
 	stats      []types.ProcessFlow
 	history    []types.DailyUsage
 	throughput []throughputSample
+	flowCache  []flowSnapshotSample
 	lastErr    error
 	historyErr error
 	interval   time.Duration
@@ -79,6 +85,7 @@ func (s *StatsService) poll() {
 		now := time.Now()
 		s.stats = stats
 		s.recordThroughputSampleLocked(now, stats)
+		s.recordFlowSnapshotLocked(now, stats)
 		s.lastErr = nil
 	}
 	s.mu.Unlock()
@@ -127,6 +134,22 @@ func (s *StatsService) SnapshotThroughput(window time.Duration, maxPoints int) [
 	return aggregateThroughputSamples(samples, window, maxPoints)
 }
 
+// SnapshotAveragedFlows returns averaged process speeds from the newest cached window.
+func (s *StatsService) SnapshotAveragedFlows(window time.Duration) []types.ProcessFlow {
+	s.mu.RLock()
+	samples := make([]flowSnapshotSample, len(s.flowCache))
+	copy(samples, s.flowCache)
+	latest := make([]types.ProcessFlow, len(s.stats))
+	copy(latest, s.stats)
+	s.mu.RUnlock()
+
+	averaged := aggregateFlowSnapshots(samples, window)
+	if len(averaged) > 0 {
+		return averaged
+	}
+	return latest
+}
+
 // Stop stops the polling goroutine.
 func (s *StatsService) Stop() {
 	close(s.stopCh)
@@ -147,6 +170,24 @@ func (s *StatsService) recordThroughputSampleLocked(now time.Time, stats []types
 	}
 	if trimIndex > 0 {
 		s.throughput = append([]throughputSample(nil), s.throughput[trimIndex:]...)
+	}
+}
+
+func (s *StatsService) recordFlowSnapshotLocked(now time.Time, stats []types.ProcessFlow) {
+	snapshot := make([]types.ProcessFlow, len(stats))
+	copy(snapshot, stats)
+	s.flowCache = append(s.flowCache, flowSnapshotSample{
+		timestamp: now,
+		stats:     snapshot,
+	})
+
+	cutoff := now.Add(-throughputRetention)
+	trimIndex := 0
+	for trimIndex < len(s.flowCache) && s.flowCache[trimIndex].timestamp.Before(cutoff) {
+		trimIndex++
+	}
+	if trimIndex > 0 {
+		s.flowCache = append([]flowSnapshotSample(nil), s.flowCache[trimIndex:]...)
 	}
 }
 
@@ -205,4 +246,69 @@ func aggregateThroughputSamples(samples []throughputSample, window time.Duration
 	}
 
 	return points
+}
+
+func aggregateFlowSnapshots(samples []flowSnapshotSample, window time.Duration) []types.ProcessFlow {
+	if len(samples) == 0 || window <= 0 {
+		return nil
+	}
+
+	latestBucketStart := samples[len(samples)-1].timestamp.Truncate(window)
+	bucketSamples := make([]flowSnapshotSample, 0, len(samples))
+	for _, sample := range samples {
+		if sample.timestamp.Truncate(window).Equal(latestBucketStart) {
+			bucketSamples = append(bucketSamples, sample)
+		}
+	}
+	if len(bucketSamples) == 0 {
+		return nil
+	}
+
+	type aggregate struct {
+		flow          types.ProcessFlow
+		uploadSum     float64
+		downloadSum   float64
+		latestSeen    time.Time
+		latestPresent bool
+	}
+
+	bucketSampleCount := float64(len(bucketSamples))
+	aggregates := make(map[uint32]*aggregate)
+	order := make([]uint32, 0)
+	for _, sample := range bucketSamples {
+		for _, flow := range sample.stats {
+			item, exists := aggregates[flow.PID]
+			if !exists {
+				flowCopy := flow
+				item = &aggregate{flow: flowCopy}
+				aggregates[flow.PID] = item
+				order = append(order, flow.PID)
+			}
+
+			item.uploadSum += flow.UploadSpeed
+			item.downloadSum += flow.DownloadSpeed
+			if !item.latestPresent || sample.timestamp.After(item.latestSeen) {
+				item.flow = flow
+				item.latestSeen = sample.timestamp
+				item.latestPresent = true
+			}
+			if flow.TotalUpload > item.flow.TotalUpload {
+				item.flow.TotalUpload = flow.TotalUpload
+			}
+			if flow.TotalDownload > item.flow.TotalDownload {
+				item.flow.TotalDownload = flow.TotalDownload
+			}
+		}
+	}
+
+	result := make([]types.ProcessFlow, 0, len(order))
+	for _, pid := range order {
+		item := aggregates[pid]
+		flow := item.flow
+		flow.UploadSpeed = item.uploadSum / bucketSampleCount
+		flow.DownloadSpeed = item.downloadSum / bucketSampleCount
+		result = append(result, flow)
+	}
+
+	return result
 }

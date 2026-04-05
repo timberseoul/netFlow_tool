@@ -101,7 +101,7 @@ fn main() {
         // Every 1 second: compute speeds, reset deltas, push to IPC, log stats
         if last_snapshot.elapsed() >= Duration::from_secs(1) {
             let _ = daily_usage.maybe_rollover();
-            let stats = aggregator.snapshot();
+            let stats = aggregator.snapshot(|pid| pid_mapper.is_process_alive(pid));
             // ArcSwap store — lock-free, readers see new data on next load
             latest_stats.store(Arc::new(stats));
             latest_history.store(Arc::new(daily_usage.snapshot()));
@@ -153,12 +153,13 @@ fn process_packet(
         parsed.direction == Direction::Outbound,
     ) {
         let name = pid_mapper.get_process_name(pid); // Arc<str> — O(1) clone
+        let parent_pid = pid_mapper.get_parent_pid(pid);
         let category = pid_mapper.get_process_category(pid);
         let (upload, download) = match parsed.direction {
             Direction::Outbound => (parsed.length as u64, 0u64),
             Direction::Inbound => (0u64, parsed.length as u64),
         };
-        aggregator.record(pid, &name, category, upload, download);
+        aggregator.record(pid, parent_pid, &name, category, upload, download);
         daily_usage.record(upload, download);
     }
 }

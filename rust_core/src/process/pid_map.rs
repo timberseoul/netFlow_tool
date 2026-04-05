@@ -1,17 +1,20 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 
 use log::{debug, error};
 use rustc_hash::FxHashMap;
 use windows::core::PWSTR;
-use windows::Win32::Foundation::NO_ERROR;
+use windows::Win32::Foundation::{CloseHandle, NO_ERROR};
 use windows::Win32::NetworkManagement::IpHelper::{
     GetExtendedTcpTable, GetExtendedUdpTable, MIB_TCP6ROW_OWNER_PID, MIB_TCP6TABLE_OWNER_PID,
     MIB_TCPROW_OWNER_PID, MIB_TCPTABLE_OWNER_PID, MIB_UDP6ROW_OWNER_PID, MIB_UDP6TABLE_OWNER_PID,
     MIB_UDPROW_OWNER_PID, MIB_UDPTABLE_OWNER_PID, TCP_TABLE_OWNER_PID_ALL, UDP_TABLE_OWNER_PID,
 };
 use windows::Win32::Networking::WinSock::{AF_INET, AF_INET6};
+use windows::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+};
 use windows::Win32::System::ProcessStatus::K32GetModuleFileNameExA;
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_INFORMATION,
@@ -74,8 +77,14 @@ pub struct PidMapper {
     /// Cached map of service PIDs → display name (from SCM).
     /// Multiple services sharing a PID are joined with ", ".
     service_pids: HashMap<u32, String>,
+    /// Snapshot of currently running PIDs from the process list.
+    running_pids: HashSet<u32>,
+    /// PID → parent PID snapshot from the process list.
+    parent_pids: HashMap<u32, u32>,
     /// When we last refreshed the service PID set.
     service_pids_last_refresh: std::time::Instant,
+    /// When we last refreshed the process snapshot cache.
+    process_snapshot_last_refresh: std::time::Instant,
     /// Cached IPv4 TCP index: (local_ip, local_port, remote_ip, remote_port) → PID.
     tcp_v4_index: FxHashMap<TcpV4Key, u32>,
     /// Cached IPv6 TCP index: (local_ip, local_port, remote_ip, remote_port) → PID.
@@ -96,16 +105,23 @@ impl PidMapper {
     /// How often to clear the PID → name/path/category caches
     /// to handle OS PID reuse (a PID assigned to a new process).
     const PID_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+    /// How often to refresh the running process snapshot used for parent lookup.
+    const PROCESS_SNAPSHOT_REFRESH_INTERVAL: std::time::Duration =
+        std::time::Duration::from_secs(5);
 
     pub fn new() -> Self {
         let service_pids = query_service_pids();
+        let (running_pids, parent_pids) = query_process_snapshot();
         let mut mapper = Self {
             process_names: HashMap::new(),
             process_paths: HashMap::new(),
             process_categories: HashMap::new(),
             pid_cache_last_clear: std::time::Instant::now(),
             service_pids,
+            running_pids,
+            parent_pids,
             service_pids_last_refresh: std::time::Instant::now(),
+            process_snapshot_last_refresh: std::time::Instant::now(),
             tcp_v4_index: FxHashMap::default(),
             tcp_v6_index: FxHashMap::default(),
             udp_v4_index: FxHashMap::default(),
@@ -126,6 +142,7 @@ impl PidMapper {
             self.rebuild_table_indexes();
             self.table_cache_last_refresh = std::time::Instant::now();
         }
+        self.maybe_refresh_process_snapshot();
         // Periodically invalidate PID → name/path/category caches
         // so that reused PIDs get fresh lookups.
         if self.pid_cache_last_clear.elapsed() >= Self::PID_CACHE_TTL {
@@ -135,6 +152,19 @@ impl PidMapper {
             self.pid_cache_last_clear = std::time::Instant::now();
             debug!("PID cache cleared (TTL={}s)", Self::PID_CACHE_TTL.as_secs());
         }
+    }
+
+    pub fn get_parent_pid(&mut self, pid: u32) -> Option<u32> {
+        self.maybe_refresh_process_snapshot();
+        self.parent_pids
+            .get(&pid)
+            .copied()
+            .filter(|parent_pid| *parent_pid != 0 && *parent_pid != pid)
+    }
+
+    pub fn is_process_alive(&mut self, pid: u32) -> bool {
+        self.maybe_refresh_process_snapshot();
+        self.running_pids.contains(&pid)
     }
 
     /// Look up PID by matching (src_ip, src_port, dst_ip, dst_port, protocol)
@@ -360,6 +390,50 @@ impl PidMapper {
             }
         }
     }
+
+    fn maybe_refresh_process_snapshot(&mut self) {
+        if self.process_snapshot_last_refresh.elapsed() >= Self::PROCESS_SNAPSHOT_REFRESH_INTERVAL {
+            let (running_pids, parent_pids) = query_process_snapshot();
+            self.running_pids = running_pids;
+            self.parent_pids = parent_pids;
+            self.process_snapshot_last_refresh = std::time::Instant::now();
+        }
+    }
+}
+
+fn query_process_snapshot() -> (HashSet<u32>, HashMap<u32, u32>) {
+    let mut running_pids = HashSet::new();
+    let mut parent_pids = HashMap::new();
+
+    let snapshot = match unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) } {
+        Ok(snapshot) => snapshot,
+        Err(err) => {
+            error!("Process snapshot query failed: {err}");
+            return (running_pids, parent_pids);
+        }
+    };
+
+    let mut entry = PROCESSENTRY32W::default();
+    entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+
+    if unsafe { Process32FirstW(snapshot, &mut entry) }.is_ok() {
+        loop {
+            let pid = entry.th32ProcessID;
+            running_pids.insert(pid);
+
+            let parent_pid = entry.th32ParentProcessID;
+            if parent_pid != 0 && parent_pid != pid {
+                parent_pids.insert(pid, parent_pid);
+            }
+
+            if unsafe { Process32NextW(snapshot, &mut entry) }.is_err() {
+                break;
+            }
+        }
+    }
+
+    let _ = unsafe { CloseHandle(snapshot) };
+    (running_pids, parent_pids)
 }
 
 fn ipv4_addr_from_row(addr: u32) -> Ipv4Addr {

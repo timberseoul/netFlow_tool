@@ -205,7 +205,7 @@ func main() {
 	}
 
 	model := ui.NewModel(statsSvc, webPort)
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(model, tea.WithAltScreen())
 
 	finalModel, err := p.Run()
 	if err != nil {
